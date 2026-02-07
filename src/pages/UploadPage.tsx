@@ -8,12 +8,14 @@ import {
   FileImage,
   Layers,
   X,
-  CheckCircle,
 } from "lucide-react";
 import { useQuiz } from "../context/QuizContext";
+import { useToast } from "../context/ToastContext";
 import UploadZone from "../components/Upload/UploadZone";
 import { generateId } from "../utils/shuffle";
-import { addQuestions, saveImageData } from "../utils/storage";
+import { addQuestions } from "../utils/storage";
+import { saveImage } from "../utils/imageDB";
+import { compressImage, computeImageHash } from "../utils/compress";
 import type { Question } from "../types";
 
 type UploadMode = "single" | "bulk";
@@ -31,13 +33,15 @@ interface PendingQuestion {
 
 export default function UploadPage() {
   const { state, setQuestions } = useQuiz();
+  const { toast } = useToast();
   const [mode, setMode] = useState<UploadMode>("bulk");
   const [pending, setPending] = useState<PendingQuestion[]>([]);
   const [bulkCategory, setBulkCategory] = useState("");
   const [bulkSubcategory, setBulkSubcategory] = useState("");
   const [bulkDifficulty, setBulkDifficulty] = useState<"kolay" | "orta" | "zor">("orta");
   const [bulkExamType, setBulkExamType] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   const selectedCat = state.categories.find((c) => c.id === bulkCategory);
 
@@ -81,15 +85,7 @@ export default function UploadPage() {
         examType: bulkExamType || p.examType,
       }))
     );
-  };
-
-  const fileToDataUrl = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+    toast("Ayarlar tum sorulara uygulandi", "info");
   };
 
   const handleSave = async () => {
@@ -97,42 +93,84 @@ export default function UploadPage() {
       (p) => !p.categoryId || !p.correctAnswer
     );
     if (incomplete.length > 0) {
-      alert("Tüm sorular için kategori ve doğru cevap seçmelisiniz.");
+      toast("Tum sorular icin kategori ve dogru cevap secmelisiniz.", "warning");
       return;
     }
 
+    setSaving(true);
+    setProgress(0);
+
+    const existingHashes = new Set(
+      state.questions
+        .map((q) => q.imageHash)
+        .filter((h): h is string => !!h)
+    );
+
     const newQuestions: Question[] = [];
+    let duplicateCount = 0;
 
-    for (const p of pending) {
-      const id = generateId();
-      const dataUrl = await fileToDataUrl(p.file);
-      saveImageData(id, dataUrl);
+    for (let i = 0; i < pending.length; i++) {
+      const p = pending[i];
+      setProgress(Math.round(((i + 1) / pending.length) * 100));
 
-      newQuestions.push({
-        id,
-        categoryId: p.categoryId,
-        subcategoryId: p.subcategoryId,
-        imagePath: "",
-        options: ["A", "B", "C", "D", "E"],
-        correctAnswer: p.correctAnswer,
-        difficulty: p.difficulty,
-        examType: p.examType || undefined,
-      });
+      try {
+        // Compute hash for duplicate detection
+        const hash = await computeImageHash(p.file);
+        if (existingHashes.has(hash)) {
+          duplicateCount++;
+          continue;
+        }
+        existingHashes.add(hash);
+
+        // Compress image
+        const compressedDataUrl = await compressImage(p.file);
+
+        // Save to IndexedDB
+        const id = generateId();
+        await saveImage(id, compressedDataUrl);
+
+        newQuestions.push({
+          id,
+          categoryId: p.categoryId,
+          subcategoryId: p.subcategoryId,
+          imagePath: "",
+          imageHash: hash,
+          options: ["A", "B", "C", "D", "E"],
+          correctAnswer: p.correctAnswer,
+          difficulty: p.difficulty,
+          examType: p.examType || undefined,
+        });
+      } catch (err) {
+        console.error("Error processing question:", err);
+        toast(`Soru isleme hatasi: ${p.file.name}`, "error");
+      }
     }
 
-    const all = addQuestions(newQuestions);
-    setQuestions(all);
+    if (newQuestions.length > 0) {
+      const all = addQuestions(newQuestions);
+      setQuestions(all);
+    }
+
+    setSaving(false);
+    setProgress(0);
     setPending([]);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+
+    if (duplicateCount > 0) {
+      toast(
+        `${newQuestions.length} soru kaydedildi, ${duplicateCount} kopya atildi.`,
+        "warning"
+      );
+    } else {
+      toast(`${newQuestions.length} soru basariyla kaydedildi!`, "success");
+    }
   };
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Soru Yükle</h1>
-        <p className="text-gray-500 mt-1">
-          PNG formatındaki soru görsellerini tekli veya toplu olarak yükleyin.
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Soru Yukle</h1>
+        <p className="text-gray-500 dark:text-gray-400 mt-1">
+          PNG formatindaki soru gorsellerini tekli veya toplu olarak yukleyin.
         </p>
       </div>
 
@@ -146,11 +184,11 @@ export default function UploadPage() {
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
             mode === "single"
               ? "bg-blue-600 text-white shadow-sm"
-              : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
+              : "bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-750"
           }`}
         >
           <ImagePlus className="w-4 h-4" />
-          Tekli Yükleme
+          Tekli Yukleme
         </button>
         <button
           onClick={() => {
@@ -160,27 +198,27 @@ export default function UploadPage() {
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
             mode === "bulk"
               ? "bg-blue-600 text-white shadow-sm"
-              : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
+              : "bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-750"
           }`}
         >
           <Layers className="w-4 h-4" />
-          Toplu Yükleme
+          Toplu Yukleme
         </button>
       </div>
 
       {/* Bulk settings */}
       {mode === "bulk" && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5 mb-6">
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4 flex items-center gap-2">
             <FileImage className="w-4 h-4" />
             Toplu Ayarlar
-            <span className="text-xs text-gray-400 font-normal">
-              (tüm sorulara uygulanır)
+            <span className="text-xs text-gray-400 dark:text-gray-500 font-normal">
+              (tum sorulara uygulanir)
             </span>
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">
                 Kategori *
               </label>
               <div className="relative">
@@ -190,9 +228,9 @@ export default function UploadPage() {
                     setBulkCategory(e.target.value);
                     setBulkSubcategory("");
                   }}
-                  className="w-full appearance-none bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full appearance-none bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm pr-8 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">Seçin...</option>
+                  <option value="">Secin...</option>
                   {state.categories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -204,7 +242,7 @@ export default function UploadPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">
                 Alt Kategori
               </label>
               <div className="relative">
@@ -212,9 +250,9 @@ export default function UploadPage() {
                   value={bulkSubcategory}
                   onChange={(e) => setBulkSubcategory(e.target.value)}
                   disabled={!bulkCategory}
-                  className="w-full appearance-none bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                  className="w-full appearance-none bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm pr-8 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 >
-                  <option value="">Seçin...</option>
+                  <option value="">Secin...</option>
                   {selectedCat?.subcategories.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
@@ -226,7 +264,7 @@ export default function UploadPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">
                 Zorluk
               </label>
               <div className="relative">
@@ -237,7 +275,7 @@ export default function UploadPage() {
                       e.target.value as "kolay" | "orta" | "zor"
                     )
                   }
-                  className="w-full appearance-none bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full appearance-none bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm pr-8 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="kolay">Kolay</option>
                   <option value="orta">Orta</option>
@@ -248,16 +286,16 @@ export default function UploadPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                Sınav Türü
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">
+                Sinav Turu
               </label>
               <div className="relative">
                 <select
                   value={bulkExamType}
                   onChange={(e) => setBulkExamType(e.target.value)}
-                  className="w-full appearance-none bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full appearance-none bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm pr-8 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">Belirtilmemiş</option>
+                  <option value="">Belirtilmemis</option>
                   <option value="TYT">TYT</option>
                   <option value="AYT">AYT</option>
                   <option value="YKS">YKS</option>
@@ -272,9 +310,9 @@ export default function UploadPage() {
           {pending.length > 0 && (
             <button
               onClick={applyBulkSettings}
-              className="mt-4 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition-colors"
+              className="mt-4 px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors"
             >
-              Ayarları Tüm Sorulara Uygula
+              Ayarlari Tum Sorulara Uygula
             </button>
           )}
         </div>
@@ -288,19 +326,39 @@ export default function UploadPage() {
         />
       </div>
 
+      {/* Progress bar during save */}
+      {saving && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Kaydediliyor...
+            </span>
+            <span className="text-sm font-medium text-blue-600 dark:text-blue-400">
+              %{progress}
+            </span>
+          </div>
+          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+            <div
+              className="bg-blue-600 dark:bg-blue-500 h-3 rounded-full transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Pending Questions Editor */}
-      {pending.length > 0 && (
+      {pending.length > 0 && !saving && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-gray-800">
-              Yüklenen Sorular ({pending.length})
+            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+              Yuklenen Sorular ({pending.length})
             </h3>
             <button
               onClick={() => setPending([])}
-              className="text-sm text-red-600 hover:text-red-700 font-medium flex items-center gap-1"
+              className="text-sm text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 font-medium flex items-center gap-1"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              Tümünü Sil
+              Tumunu Sil
             </button>
           </div>
 
@@ -308,7 +366,7 @@ export default function UploadPage() {
             {pending.map((p, index) => (
               <div
                 key={p.tempId}
-                className="bg-white rounded-xl border border-gray-200 p-4"
+                className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4"
               >
                 <div className="flex gap-4">
                   {/* Preview */}
@@ -316,16 +374,16 @@ export default function UploadPage() {
                     <img
                       src={p.preview}
                       alt={`Soru ${index + 1}`}
-                      className="w-40 h-28 object-cover rounded-lg border border-gray-200"
+                      className="w-40 h-28 object-cover rounded-lg border border-gray-200 dark:border-gray-700"
                     />
                   </div>
 
                   {/* Settings */}
                   <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div className="col-span-2 sm:col-span-4">
-                      <span className="text-sm font-medium text-gray-700">
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                         Soru {index + 1} -{" "}
-                        <span className="text-gray-400 text-xs">
+                        <span className="text-gray-400 dark:text-gray-500 text-xs">
                           {p.file.name}
                         </span>
                       </span>
@@ -334,7 +392,7 @@ export default function UploadPage() {
                     {mode === "single" && (
                       <>
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
                             Kategori *
                           </label>
                           <select
@@ -346,9 +404,9 @@ export default function UploadPage() {
                                 e.target.value
                               )
                             }
-                            className="w-full bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                           >
-                            <option value="">Seçin</option>
+                            <option value="">Secin</option>
                             {state.categories.map((c) => (
                               <option key={c.id} value={c.id}>
                                 {c.name}
@@ -357,7 +415,7 @@ export default function UploadPage() {
                           </select>
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
                             Alt Kategori
                           </label>
                           <select
@@ -369,9 +427,9 @@ export default function UploadPage() {
                                 e.target.value
                               )
                             }
-                            className="w-full bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                           >
-                            <option value="">Seçin</option>
+                            <option value="">Secin</option>
                             {state.categories
                               .find((c) => c.id === p.categoryId)
                               ?.subcategories.map((s) => (
@@ -385,8 +443,8 @@ export default function UploadPage() {
                     )}
 
                     <div>
-                      <label className="block text-xs text-gray-500 mb-1">
-                        Doğru Cevap *
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        Dogru Cevap *
                       </label>
                       <div className="flex gap-1">
                         {["A", "B", "C", "D", "E"].map((opt) => (
@@ -398,7 +456,7 @@ export default function UploadPage() {
                             className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${
                               p.correctAnswer === opt
                                 ? "bg-green-500 text-white"
-                                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                : "bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
                             }`}
                           >
                             {opt}
@@ -409,7 +467,7 @@ export default function UploadPage() {
 
                     {mode === "single" && (
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">
+                        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
                           Zorluk
                         </label>
                         <select
@@ -421,7 +479,7 @@ export default function UploadPage() {
                               e.target.value
                             )
                           }
-                          className="w-full bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
                           <option value="kolay">Kolay</option>
                           <option value="orta">Orta</option>
@@ -434,7 +492,7 @@ export default function UploadPage() {
                   {/* Remove button */}
                   <button
                     onClick={() => removePending(p.tempId)}
-                    className="shrink-0 self-start p-2 text-gray-400 hover:text-red-500 transition-colors"
+                    className="shrink-0 self-start p-2 text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -447,13 +505,14 @@ export default function UploadPage() {
           <div className="flex justify-end gap-3 pt-4">
             <button
               onClick={() => setPending([])}
-              className="px-5 py-2.5 rounded-xl text-sm font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+              className="px-5 py-2.5 rounded-xl text-sm font-medium bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
             >
-              İptal
+              Iptal
             </button>
             <button
               onClick={handleSave}
-              className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-sm"
+              disabled={saving}
+              className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
             >
               <Save className="w-4 h-4" />
               {pending.length} Soruyu Kaydet
@@ -462,21 +521,13 @@ export default function UploadPage() {
         </div>
       )}
 
-      {/* Success notification */}
-      {saved && (
-        <div className="fixed bottom-6 right-6 bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-2 animate-bounce">
-          <CheckCircle className="w-5 h-5" />
-          Sorular başarıyla kaydedildi!
-        </div>
-      )}
-
       {/* Current question count */}
-      <div className="mt-8 p-4 bg-gray-50 rounded-xl border border-gray-200">
+      <div className="mt-8 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-2">
-          <Upload className="w-4 h-4 text-gray-400" />
-          <span className="text-sm text-gray-600">
-            Toplam kayıtlı soru:{" "}
-            <span className="font-bold text-gray-800">
+          <Upload className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+          <span className="text-sm text-gray-600 dark:text-gray-400">
+            Toplam kayitli soru:{" "}
+            <span className="font-bold text-gray-800 dark:text-white">
               {state.questions.length}
             </span>
           </span>
@@ -485,4 +536,3 @@ export default function UploadPage() {
     </div>
   );
 }
-

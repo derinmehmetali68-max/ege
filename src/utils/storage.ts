@@ -3,6 +3,15 @@ import type { Question, UserStats } from "../types";
 const QUESTIONS_KEY = "ege-soru-bankasi-questions";
 const STATS_KEY = "ege-soru-bankasi-stats";
 
+const defaultStats: UserStats = {
+  totalQuestionsSolved: 0,
+  totalCorrect: 0,
+  totalIncorrect: 0,
+  categoryStats: {},
+  lastActiveAt: Date.now(),
+  sessionHistory: [],
+};
+
 export function getStoredQuestions(): Question[] {
   try {
     const data = localStorage.getItem(QUESTIONS_KEY);
@@ -13,7 +22,11 @@ export function getStoredQuestions(): Question[] {
 }
 
 export function saveQuestions(questions: Question[]): void {
-  localStorage.setItem(QUESTIONS_KEY, JSON.stringify(questions));
+  try {
+    localStorage.setItem(QUESTIONS_KEY, JSON.stringify(questions));
+  } catch (e) {
+    console.error("Storage quota exceeded for questions", e);
+  }
 }
 
 export function addQuestions(newQuestions: Question[]): Question[] {
@@ -32,50 +45,39 @@ export function deleteQuestion(id: string): Question[] {
   return filtered;
 }
 
+export function updateQuestion(id: string, updates: Partial<Question>): Question[] {
+  const existing = getStoredQuestions();
+  const updated = existing.map((q) => (q.id === id ? { ...q, ...updates } : q));
+  saveQuestions(updated);
+  return updated;
+}
+
 export function getUserStats(): UserStats {
   try {
     const data = localStorage.getItem(STATS_KEY);
-    return data
-      ? JSON.parse(data)
-      : {
-          totalQuestionsSolved: 0,
-          totalCorrect: 0,
-          totalIncorrect: 0,
-          categoryStats: {},
-          lastActiveAt: Date.now(),
-        };
+    if (!data) return { ...defaultStats };
+    const parsed = JSON.parse(data);
+    return { ...defaultStats, ...parsed };
   } catch {
-    return {
-      totalQuestionsSolved: 0,
-      totalCorrect: 0,
-      totalIncorrect: 0,
-      categoryStats: {},
-      lastActiveAt: Date.now(),
-    };
+    return { ...defaultStats };
   }
 }
 
 export function saveUserStats(stats: UserStats): void {
-  localStorage.setItem(STATS_KEY, JSON.stringify(stats));
-}
-
-export function getStoredImages(): Record<string, string> {
   try {
-    const data = localStorage.getItem("ege-soru-images");
-    return data ? JSON.parse(data) : {};
-  } catch {
-    return {};
+    localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  } catch (e) {
+    console.error("Storage quota exceeded for stats", e);
   }
 }
 
-export function saveImageData(questionId: string, dataUrl: string): void {
-  const images = getStoredImages();
-  images[questionId] = dataUrl;
-  localStorage.setItem("ege-soru-images", JSON.stringify(images));
+export function exportData(): { questions: Question[]; stats: UserStats } {
+  return { questions: getStoredQuestions(), stats: getUserStats() };
 }
 
-export function deleteImageData(questionId: string): void {
-  const images = getStoredImages();
-  delete images[questionId];
-  localStorage.setItem("ege-soru-images", JSON.stringify(images));
+export function importData(data: { questions: Question[] }): Question[] {
+  if (data.questions) {
+    return addQuestions(data.questions);
+  }
+  return getStoredQuestions();
 }

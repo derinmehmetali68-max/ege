@@ -17,11 +17,13 @@ export interface Question {
   categoryId: string;
   subcategoryId: string;
   imagePath: string;
+  imageHash?: string;
   options: string[];
   correctAnswer: string;
   difficulty: "kolay" | "orta" | "zor";
   year?: number;
   examType?: string;
+  bookmarked?: boolean;
 }
 
 export interface UserAnswer {
@@ -52,6 +54,18 @@ export interface QuizScore {
   percentage: number;
 }
 
+export interface SessionRecord {
+  id: string;
+  date: number;
+  categoryId: string | null;
+  total: number;
+  correct: number;
+  incorrect: number;
+  netScore: number;
+  percentage: number;
+  timeSpent: number;
+}
+
 export interface UserStats {
   totalQuestionsSolved: number;
   totalCorrect: number;
@@ -62,4 +76,7 @@ export interface UserStats {
     incorrect: number;
   }>;
   lastActiveAt: number;
+  sessionHistory: SessionRecord[];
 }
+
+export type ThemeMode = "light" | "dark";
