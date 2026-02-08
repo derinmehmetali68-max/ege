@@ -15,15 +15,16 @@ import {
 } from "lucide-react";
 import { useQuiz } from "../context/QuizContext";
 import { getImage } from "../utils/imageDB";
+import PodiumScreen from "../components/Kahoot/PodiumScreen";
 
 export default function ResultsPage() {
   const navigate = useNavigate();
   const { state, enterReview, exitReview, reviewGoTo } = useQuiz();
   const { score, sessionQuestions, answers, reviewMode, reviewIndex, totalTimeSpent } = state;
+  const isKahoot = state.kahoot.enabled;
 
   const [reviewImageSrc, setReviewImageSrc] = useState<string | null>(null);
 
-  // Load review image when review index changes
   useEffect(() => {
     if (!reviewMode) {
       setReviewImageSrc(null);
@@ -51,7 +52,6 @@ export default function ResultsPage() {
     if (reviewIndex < sessionQuestions.length - 1) reviewGoTo(reviewIndex + 1);
   }, [reviewIndex, sessionQuestions.length, reviewGoTo]);
 
-  // Keyboard navigation in review mode
   useEffect(() => {
     if (!reviewMode) return;
     const handler = (e: KeyboardEvent) => {
@@ -96,7 +96,6 @@ export default function ResultsPage() {
     return (
       <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
         <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
-          {/* Review header */}
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
             <h2 className="text-lg font-bold text-gray-900 dark:text-white">
               Soru {reviewIndex + 1} / {sessionQuestions.length}
@@ -109,7 +108,6 @@ export default function ResultsPage() {
             </button>
           </div>
 
-          {/* Question image */}
           <div className="p-4">
             {reviewImageSrc ? (
               <img
@@ -124,7 +122,6 @@ export default function ResultsPage() {
             )}
           </div>
 
-          {/* Answer info */}
           {question && (
             <div className="px-4 pb-4 space-y-3">
               <div className="grid grid-cols-2 gap-3">
@@ -170,7 +167,6 @@ export default function ResultsPage() {
                 </div>
               </div>
 
-              {/* Difficulty badge */}
               <div className="flex items-center gap-2">
                 <span
                   className={`text-xs font-medium px-2.5 py-1 rounded-full ${
@@ -188,11 +184,15 @@ export default function ResultsPage() {
                     {answer.timeSpent} sn
                   </span>
                 )}
+                {isKahoot && answer && (
+                  <span className="text-xs font-bold text-purple-500">
+                    +{answer.kahootPoints || 0} puan
+                  </span>
+                )}
               </div>
             </div>
           )}
 
-          {/* Navigation */}
           <div className="flex items-center justify-between p-4 border-t border-gray-200 dark:border-gray-700">
             <button
               onClick={handleReviewPrev}
@@ -203,15 +203,12 @@ export default function ResultsPage() {
               Onceki
             </button>
 
-            {/* Quick jump dots */}
             <div className="flex flex-wrap gap-1 max-w-xs justify-center">
               {sessionQuestions.map((q, i) => {
                 const a = answers[q.id];
                 let dotColor = "bg-gray-300 dark:bg-gray-600";
                 if (a) {
-                  dotColor = a.isCorrect
-                    ? "bg-green-500"
-                    : "bg-red-500";
+                  dotColor = a.isCorrect ? "bg-green-500" : "bg-red-500";
                 }
                 return (
                   <button
@@ -245,11 +242,16 @@ export default function ResultsPage() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-10">
+      {/* Kahoot Podium */}
+      {isKahoot && <PodiumScreen />}
+
       {/* Header */}
       <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-50 dark:bg-blue-900/30 rounded-full mb-4">
-          <Trophy className="w-10 h-10 text-blue-600 dark:text-blue-400" />
-        </div>
+        {!isKahoot && (
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-50 dark:bg-blue-900/30 rounded-full mb-4">
+            <Trophy className="w-10 h-10 text-blue-600 dark:text-blue-400" />
+          </div>
+        )}
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Test Sonucu</h1>
         <p className={`text-xl font-bold mt-2 ${grade.color}`}>
           {grade.label}

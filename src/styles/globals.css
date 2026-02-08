@@ -12,3 +12,85 @@
     transform: translateX(0);
   }
 }
+
+/* Kahoot shake animation for wrong answers */
+@keyframes kahootShake {
+  0%, 100% { transform: translateX(0); }
+  10% { transform: translateX(-8px); }
+  20% { transform: translateX(8px); }
+  30% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  50% { transform: translateX(-4px); }
+  60% { transform: translateX(4px); }
+  70% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+.kahoot-shake {
+  animation: kahootShake 0.6s ease-in-out;
+}
+
+/* Confetti fall animation */
+@keyframes confettiFall {
+  0% {
+    transform: translateY(-10vh) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(110vh) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+.confetti-fall {
+  animation: confettiFall 2.5s ease-in forwards;
+}
+
+/* Kahoot points pop animation */
+@keyframes pointsPop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.kahoot-points-pop {
+  animation: pointsPop 0.4s ease-out;
+}
+
+/* Lobby pulse animation */
+@keyframes lobbyPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+
+.lobby-pulse {
+  animation: lobbyPulse 1s ease-in-out infinite;
+}
+
+/* Podium slide up */
+@keyframes podiumSlideUp {
+  from {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.podium-slide-up {
+  animation: podiumSlideUp 0.6s ease-out;
+}

@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Bookmark,
   Filter,
+  Zap,
 } from "lucide-react";
 import { useState } from "react";
 import { useQuiz } from "../context/QuizContext";
@@ -78,6 +79,7 @@ export default function HomePage() {
   const [selectedCount, setSelectedCount] = useState(20);
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>("");
   const [bookmarkedOnly, setBookmarkedOnly] = useState(false);
+  const [kahootMode, setKahootMode] = useState(false);
 
   const bookmarkedCount = state.questions.filter((q) => q.bookmarked).length;
 
@@ -103,6 +105,7 @@ export default function HomePage() {
       difficulty: selectedDifficulty || undefined,
       bookmarkedOnly: bookmarkedOnly || undefined,
       count: Math.min(selectedCount, count),
+      kahootMode,
     });
     navigate("/quiz");
   };
@@ -116,6 +119,7 @@ export default function HomePage() {
       difficulty: selectedDifficulty || undefined,
       bookmarkedOnly: bookmarkedOnly || undefined,
       count: Math.min(selectedCount, totalFiltered),
+      kahootMode,
     });
     navigate("/quiz");
   };
@@ -133,7 +137,7 @@ export default function HomePage() {
       </div>
 
       {/* Filters row */}
-      <div className="flex flex-wrap items-center justify-center gap-3 mb-8">
+      <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
         {/* Question count */}
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-600 dark:text-gray-400">Soru sayisi:</span>
@@ -184,7 +188,36 @@ export default function HomePage() {
           <Bookmark className={`w-4 h-4 ${bookmarkedOnly ? "fill-amber-500" : ""}`} />
           Isaretliler ({bookmarkedCount})
         </button>
+
+        {/* Kahoot mode toggle */}
+        <button
+          onClick={() => setKahootMode(!kahootMode)}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border ${
+            kahootMode
+              ? "bg-gradient-to-r from-purple-500 to-blue-500 border-purple-400 text-white shadow-lg shadow-purple-500/25"
+              : "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-750"
+          }`}
+        >
+          <Zap className={`w-4 h-4 ${kahootMode ? "text-yellow-300" : ""}`} />
+          Kahoot Modu
+        </button>
       </div>
+
+      {/* Kahoot info banner */}
+      {kahootMode && (
+        <div className="mb-8 p-4 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-950/30 dark:to-blue-950/30 border border-purple-200 dark:border-purple-800 rounded-2xl">
+          <div className="flex items-center gap-3 mb-2">
+            <Zap className="w-5 h-5 text-purple-500" />
+            <h3 className="font-bold text-purple-700 dark:text-purple-300">Kahoot Modu Aktif!</h3>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-purple-600 dark:text-purple-400">
+            <span>🏆 Hiz bazli puanlama</span>
+            <span>🔥 Seri bonus sistemi</span>
+            <span>⏱️ 30sn geri sayim</span>
+            <span>⚡ Power-up'lar</span>
+          </div>
+        </div>
+      )}
 
       {/* No questions prompt */}
       {totalQuestions === 0 && (
@@ -216,14 +249,20 @@ export default function HomePage() {
             <button
               key={cat.id}
               onClick={() => handleStartQuiz(cat.id)}
-              className={`group p-6 rounded-2xl border ${colors.border} ${colors.light} hover:shadow-md transition-all text-left`}
+              className={`group p-6 rounded-2xl border ${colors.border} ${colors.light} hover:shadow-md transition-all text-left ${
+                kahootMode ? "ring-2 ring-purple-300/50 dark:ring-purple-700/50" : ""
+              }`}
             >
               <div className="flex items-start justify-between mb-4">
                 <div className={`${colors.text}`}>
                   {iconMap[cat.icon] || <BookOpen className="w-8 h-8" />}
                 </div>
                 {count > 0 && (
-                  <Play className="w-5 h-5 text-gray-300 dark:text-gray-600 group-hover:text-gray-500 dark:group-hover:text-gray-400 transition-colors" />
+                  kahootMode ? (
+                    <Zap className="w-5 h-5 text-purple-400 group-hover:text-purple-500 transition-colors" />
+                  ) : (
+                    <Play className="w-5 h-5 text-gray-300 dark:text-gray-600 group-hover:text-gray-500 dark:group-hover:text-gray-400 transition-colors" />
+                  )
                 )}
               </div>
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-1">
@@ -255,10 +294,14 @@ export default function HomePage() {
         <div className="text-center">
           <button
             onClick={handleStartAll}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors shadow-sm"
+            className={`inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-colors shadow-sm ${
+              kahootMode
+                ? "bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 shadow-purple-500/25"
+                : "bg-blue-600 text-white hover:bg-blue-700"
+            }`}
           >
-            <Play className="w-5 h-5" />
-            Karisik Test Baslat ({totalFiltered} soru)
+            {kahootMode ? <Zap className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+            {kahootMode ? "Kahoot Testi Baslat" : "Karisik Test Baslat"} ({totalFiltered} soru)
           </button>
         </div>
       )}

@@ -32,6 +32,34 @@ export interface UserAnswer {
   isCorrect: boolean;
   answeredAt: number;
   timeSpent: number;
+  kahootPoints?: number;
+  streak?: number;
+}
+
+// Kahoot Power-up types
+export type PowerUpType = "fiftyFifty" | "doublePoints" | "freezeTime";
+
+export interface PowerUp {
+  type: PowerUpType;
+  label: string;
+  icon: string;
+  used: boolean;
+}
+
+export interface KahootState {
+  enabled: boolean;
+  totalPoints: number;
+  streak: number;
+  bestStreak: number;
+  countdownPerQuestion: number;
+  countdownRemaining: number;
+  powerUps: PowerUp[];
+  eliminatedOptions: string[];
+  doublePointsActive: boolean;
+  freezeTimeActive: boolean;
+  showAnswerDistribution: boolean;
+  lobbyCountdown: number;
+  inLobby: boolean;
 }
 
 export interface QuizSession {
@@ -64,6 +92,7 @@ export interface SessionRecord {
   netScore: number;
   percentage: number;
   timeSpent: number;
+  kahootPoints?: number;
 }
 
 export interface UserStats {

@@ -3,7 +3,11 @@ import { ZoomIn, ZoomOut, Bookmark, BookmarkCheck } from "lucide-react";
 import { useQuiz } from "../../context/QuizContext";
 import { getImage } from "../../utils/imageDB";
 
-export default function QuestionCard() {
+interface QuestionCardProps {
+  hideOptions?: boolean;
+}
+
+export default function QuestionCard({ hideOptions }: QuestionCardProps) {
   const { state, submitAnswer, toggleBookmark } = useQuiz();
   const [zoomed, setZoomed] = useState(false);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -38,14 +42,14 @@ export default function QuestionCard() {
     };
   }, [question?.id, question?.imagePath]);
 
-  // Keyboard shortcuts: A-E to answer
+  // Keyboard shortcuts: A-E to answer (only when options are shown here)
   useEffect(() => {
+    if (hideOptions) return; // Kahoot mode handles its own keyboard
     if (!question) return;
     const answer = state.answers[question.id];
-    if (answer) return; // already answered
+    if (answer) return;
 
     const handler = (e: KeyboardEvent) => {
-      // Ignore if user is typing in an input
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
@@ -58,7 +62,7 @@ export default function QuestionCard() {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [question?.id, question?.options, state.answers, submitAnswer]);
+  }, [question?.id, question?.options, state.answers, submitAnswer, hideOptions]);
 
   if (!question) return null;
 
@@ -88,7 +92,6 @@ export default function QuestionCard() {
     <div className="space-y-6">
       {/* Question Image */}
       <div className="relative bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-        {/* Zoom button */}
         <button
           onClick={() => setZoomed(!zoomed)}
           className="absolute top-3 right-3 z-10 p-2 bg-white/90 dark:bg-gray-700/90 rounded-lg shadow-sm hover:bg-white dark:hover:bg-gray-700 transition-colors"
@@ -100,11 +103,10 @@ export default function QuestionCard() {
           )}
         </button>
 
-        {/* Bookmark button */}
         <button
           onClick={() => toggleBookmark(question.id)}
           className="absolute top-3 left-3 z-10 p-2 bg-white/90 dark:bg-gray-700/90 rounded-lg shadow-sm hover:bg-white dark:hover:bg-gray-700 transition-colors"
-          aria-label={isBookmarked ? "Yer imini kaldır" : "Yer imine ekle"}
+          aria-label={isBookmarked ? "Yer imini kaldir" : "Yer imine ekle"}
         >
           {isBookmarked ? (
             <BookmarkCheck className="w-4 h-4 text-yellow-500" />
@@ -153,45 +155,47 @@ export default function QuestionCard() {
         )}
         {isBookmarked && (
           <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-400">
-            Yer İmi
+            Yer Imi
           </span>
         )}
       </div>
 
-      {/* Answer Options */}
-      <div className="grid grid-cols-5 gap-3">
-        {question.options.map((opt) => (
-          <button
-            key={opt}
-            onClick={() => handleSelect(opt)}
-            disabled={hasAnswered}
-            className={`py-4 rounded-xl text-lg font-bold transition-all ${getOptionStyle(opt)} ${!hasAnswered ? "active:scale-95" : ""}`}
-          >
-            {opt}
-          </button>
-        ))}
-      </div>
+      {/* Answer Options - hidden in Kahoot mode (KahootAnswerButtons handles it) */}
+      {!hideOptions && (
+        <>
+          <div className="grid grid-cols-5 gap-3">
+            {question.options.map((opt) => (
+              <button
+                key={opt}
+                onClick={() => handleSelect(opt)}
+                disabled={hasAnswered}
+                className={`py-4 rounded-xl text-lg font-bold transition-all ${getOptionStyle(opt)} ${!hasAnswered ? "active:scale-95" : ""}`}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
 
-      {/* Keyboard hint */}
-      {!hasAnswered && (
-        <p className="text-xs text-center text-gray-400 dark:text-gray-500">
-          Klavye kısayolu: A - E tuşları ile cevaplayabilirsiniz
-        </p>
-      )}
+          {!hasAnswered && (
+            <p className="text-xs text-center text-gray-400 dark:text-gray-500">
+              Klavye kisayolu: A - E tuslari ile cevaplayabilirsiniz
+            </p>
+          )}
 
-      {/* Result feedback */}
-      {hasAnswered && (
-        <div
-          className={`p-4 rounded-xl text-center font-medium ${
-            answer.isCorrect
-              ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800"
-              : "bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"
-          }`}
-        >
-          {answer.isCorrect
-            ? "Doğru cevap!"
-            : `Yanlış! Doğru cevap: ${question.correctAnswer}`}
-        </div>
+          {hasAnswered && (
+            <div
+              className={`p-4 rounded-xl text-center font-medium ${
+                answer.isCorrect
+                  ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800"
+                  : "bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"
+              }`}
+            >
+              {answer.isCorrect
+                ? "Dogru cevap!"
+                : `Yanlis! Dogru cevap: ${question.correctAnswer}`}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

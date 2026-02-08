@@ -12,8 +12,11 @@ import type {
   UserStats,
   Category,
   SessionRecord,
+  KahootState,
+  PowerUpType,
 } from "../types";
 import { calculateScore } from "../utils/scoring";
+import { calculateKahootPoints, getDefaultPowerUps } from "../utils/kahootScoring";
 import {
   getStoredQuestions,
   saveQuestions,
@@ -24,6 +27,27 @@ import {
 } from "../utils/storage";
 import { shuffleArray, generateId } from "../utils/shuffle";
 import categoriesData from "../data/categories.json";
+
+const DEFAULT_COUNTDOWN = 30;
+const LOBBY_COUNTDOWN = 5;
+
+function initKahoot(): KahootState {
+  return {
+    enabled: false,
+    totalPoints: 0,
+    streak: 0,
+    bestStreak: 0,
+    countdownPerQuestion: DEFAULT_COUNTDOWN,
+    countdownRemaining: DEFAULT_COUNTDOWN,
+    powerUps: getDefaultPowerUps(),
+    eliminatedOptions: [],
+    doublePointsActive: false,
+    freezeTimeActive: false,
+    showAnswerDistribution: false,
+    lobbyCountdown: LOBBY_COUNTDOWN,
+    inLobby: false,
+  };
+}
 
 interface QuizState {
   questions: Question[];
@@ -42,6 +66,7 @@ interface QuizState {
   selectedCategory: string | null;
   selectedSubcategory: string | null;
   selectedDifficulty: string | null;
+  kahoot: KahootState;
 }
 
 type Action =
@@ -54,6 +79,7 @@ type Action =
         difficulty?: string;
         count?: number;
         bookmarkedOnly?: boolean;
+        kahootMode?: boolean;
       };
     }
   | { type: "END_QUIZ"; payload: { totalTime: number } }
@@ -68,7 +94,12 @@ type Action =
   | { type: "UPDATE_QUESTION"; payload: { id: string; updates: Partial<Question> } }
   | { type: "ENTER_REVIEW"; payload?: number }
   | { type: "EXIT_REVIEW" }
-  | { type: "REVIEW_GO_TO"; payload: number };
+  | { type: "REVIEW_GO_TO"; payload: number }
+  | { type: "KAHOOT_COUNTDOWN_TICK" }
+  | { type: "KAHOOT_USE_POWERUP"; payload: PowerUpType }
+  | { type: "KAHOOT_DISMISS_DISTRIBUTION" }
+  | { type: "KAHOOT_LOBBY_TICK" }
+  | { type: "KAHOOT_LOBBY_DONE" };
 
 const emptyScore: QuizScore = {
   total: 0, correct: 0, incorrect: 0, unanswered: 0, netScore: 0, percentage: 0,
@@ -92,6 +123,7 @@ function initState(): QuizState {
     selectedCategory: null,
     selectedSubcategory: null,
     selectedDifficulty: null,
+    kahoot: initKahoot(),
   };
 }
 
@@ -103,7 +135,7 @@ function reducer(state: QuizState, action: Action): QuizState {
     }
 
     case "START_QUIZ": {
-      const { categoryId, subcategoryId, difficulty, count, bookmarkedOnly } = action.payload;
+      const { categoryId, subcategoryId, difficulty, count, bookmarkedOnly, kahootMode } = action.payload;
       let filtered = [...state.questions];
       if (categoryId) filtered = filtered.filter((q) => q.categoryId === categoryId);
       if (subcategoryId) filtered = filtered.filter((q) => q.subcategoryId === subcategoryId);
@@ -111,6 +143,15 @@ function reducer(state: QuizState, action: Action): QuizState {
       if (bookmarkedOnly) filtered = filtered.filter((q) => q.bookmarked);
       const shuffled = shuffleArray(filtered);
       const selected = count ? shuffled.slice(0, count) : shuffled;
+
+      const kahoot: KahootState = {
+        ...initKahoot(),
+        enabled: !!kahootMode,
+        inLobby: !!kahootMode,
+        lobbyCountdown: LOBBY_COUNTDOWN,
+        countdownRemaining: DEFAULT_COUNTDOWN,
+      };
+
       return {
         ...state,
         sessionId: generateId(),
@@ -125,6 +166,7 @@ function reducer(state: QuizState, action: Action): QuizState {
         reviewIndex: 0,
         selectedCategory: categoryId || null,
         selectedSubcategory: subcategoryId || null,
+        kahoot,
       };
     }
 
@@ -152,6 +194,7 @@ function reducer(state: QuizState, action: Action): QuizState {
         netScore: score.netScore,
         percentage: score.percentage,
         timeSpent: action.payload.totalTime,
+        kahootPoints: state.kahoot.enabled ? state.kahoot.totalPoints : undefined,
       };
       if (!stats.sessionHistory) stats.sessionHistory = [];
       stats.sessionHistory = [record, ...stats.sessionHistory].slice(0, 50);
@@ -165,21 +208,72 @@ function reducer(state: QuizState, action: Action): QuizState {
       if (!question) return state;
       const now = Date.now();
       const timeSpent = Math.round((now - state.questionStartTime) / 1000);
+      const isCorrect = answer === question.correctAnswer;
+
+      let kahootPoints = 0;
+      let newStreak = state.kahoot.streak;
+      let bestStreak = state.kahoot.bestStreak;
+
+      if (state.kahoot.enabled) {
+        if (isCorrect) {
+          newStreak = state.kahoot.streak + 1;
+          kahootPoints = calculateKahootPoints(
+            timeSpent,
+            state.kahoot.countdownPerQuestion,
+            true,
+            newStreak,
+            state.kahoot.doublePointsActive
+          );
+        } else {
+          newStreak = 0;
+        }
+        bestStreak = Math.max(bestStreak, newStreak);
+      }
+
       const userAnswer: UserAnswer = {
         questionId,
         selectedAnswer: answer,
-        isCorrect: answer === question.correctAnswer,
+        isCorrect,
         answeredAt: now,
         timeSpent,
+        kahootPoints,
+        streak: newStreak,
       };
       const newAnswers = { ...state.answers, [questionId]: userAnswer };
       const score = calculateScore(newAnswers, state.sessionQuestions.length);
-      return { ...state, answers: newAnswers, score };
+
+      return {
+        ...state,
+        answers: newAnswers,
+        score,
+        kahoot: {
+          ...state.kahoot,
+          totalPoints: state.kahoot.totalPoints + kahootPoints,
+          streak: newStreak,
+          bestStreak,
+          doublePointsActive: false,
+          freezeTimeActive: false,
+          showAnswerDistribution: state.kahoot.enabled,
+          eliminatedOptions: [],
+        },
+      };
     }
 
     case "GO_TO_QUESTION": {
       const idx = Math.max(0, Math.min(action.payload, state.sessionQuestions.length - 1));
-      return { ...state, currentIndex: idx, questionStartTime: Date.now() };
+      return {
+        ...state,
+        currentIndex: idx,
+        questionStartTime: Date.now(),
+        kahoot: {
+          ...state.kahoot,
+          countdownRemaining: state.kahoot.countdownPerQuestion,
+          showAnswerDistribution: false,
+          eliminatedOptions: [],
+          doublePointsActive: false,
+          freezeTimeActive: false,
+        },
+      };
     }
 
     case "SET_CATEGORY":
@@ -224,6 +318,101 @@ function reducer(state: QuizState, action: Action): QuizState {
     case "REVIEW_GO_TO":
       return { ...state, reviewIndex: Math.max(0, Math.min(action.payload, state.sessionQuestions.length - 1)) };
 
+    case "KAHOOT_COUNTDOWN_TICK": {
+      if (!state.kahoot.enabled || state.kahoot.freezeTimeActive) return state;
+      const remaining = state.kahoot.countdownRemaining - 1;
+      if (remaining <= 0) {
+        const question = state.sessionQuestions[state.currentIndex];
+        if (question && !state.answers[question.id]) {
+          const now = Date.now();
+          const timeSpent = Math.round((now - state.questionStartTime) / 1000);
+          const userAnswer: UserAnswer = {
+            questionId: question.id,
+            selectedAnswer: null,
+            isCorrect: false,
+            answeredAt: now,
+            timeSpent,
+            kahootPoints: 0,
+            streak: 0,
+          };
+          const newAnswers = { ...state.answers, [question.id]: userAnswer };
+          const score = calculateScore(newAnswers, state.sessionQuestions.length);
+          return {
+            ...state,
+            answers: newAnswers,
+            score,
+            kahoot: {
+              ...state.kahoot,
+              countdownRemaining: 0,
+              streak: 0,
+              showAnswerDistribution: true,
+            },
+          };
+        }
+      }
+      return {
+        ...state,
+        kahoot: { ...state.kahoot, countdownRemaining: remaining },
+      };
+    }
+
+    case "KAHOOT_USE_POWERUP": {
+      const powerUpType = action.payload;
+      const kahoot = { ...state.kahoot };
+      const question = state.sessionQuestions[state.currentIndex];
+
+      kahoot.powerUps = kahoot.powerUps.map((p) =>
+        p.type === powerUpType ? { ...p, used: true } : p
+      );
+
+      switch (powerUpType) {
+        case "fiftyFifty": {
+          if (question) {
+            const wrongOptions = question.options.filter((o) => o !== question.correctAnswer);
+            const shuffled = shuffleArray(wrongOptions);
+            kahoot.eliminatedOptions = shuffled.slice(0, 2);
+          }
+          break;
+        }
+        case "doublePoints":
+          kahoot.doublePointsActive = true;
+          break;
+        case "freezeTime":
+          kahoot.freezeTimeActive = true;
+          break;
+      }
+
+      return { ...state, kahoot };
+    }
+
+    case "KAHOOT_DISMISS_DISTRIBUTION":
+      return {
+        ...state,
+        kahoot: { ...state.kahoot, showAnswerDistribution: false },
+      };
+
+    case "KAHOOT_LOBBY_TICK": {
+      const remaining = state.kahoot.lobbyCountdown - 1;
+      if (remaining <= 0) {
+        return {
+          ...state,
+          kahoot: { ...state.kahoot, lobbyCountdown: 0, inLobby: false },
+          questionStartTime: Date.now(),
+        };
+      }
+      return {
+        ...state,
+        kahoot: { ...state.kahoot, lobbyCountdown: remaining },
+      };
+    }
+
+    case "KAHOOT_LOBBY_DONE":
+      return {
+        ...state,
+        kahoot: { ...state.kahoot, inLobby: false, lobbyCountdown: 0 },
+        questionStartTime: Date.now(),
+      };
+
     default:
       return state;
   }
@@ -232,7 +421,7 @@ function reducer(state: QuizState, action: Action): QuizState {
 interface QuizContextType {
   state: QuizState;
   setQuestions: (q: Question[]) => void;
-  startQuiz: (opts: { categoryId?: string; subcategoryId?: string; difficulty?: string; count?: number; bookmarkedOnly?: boolean }) => void;
+  startQuiz: (opts: { categoryId?: string; subcategoryId?: string; difficulty?: string; count?: number; bookmarkedOnly?: boolean; kahootMode?: boolean }) => void;
   endQuiz: (totalTime: number) => void;
   submitAnswer: (questionId: string, answer: string) => void;
   goToQuestion: (index: number) => void;
@@ -248,6 +437,11 @@ interface QuizContextType {
   enterReview: (startIndex?: number) => void;
   exitReview: () => void;
   reviewGoTo: (index: number) => void;
+  kahootCountdownTick: () => void;
+  kahootUsePowerUp: (type: PowerUpType) => void;
+  kahootDismissDistribution: () => void;
+  kahootLobbyTick: () => void;
+  kahootLobbyDone: () => void;
 }
 
 const QuizContext = createContext<QuizContextType | null>(null);
@@ -256,7 +450,7 @@ export function QuizProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, initState);
 
   const setQuestions = useCallback((q: Question[]) => dispatch({ type: "SET_QUESTIONS", payload: q }), []);
-  const startQuiz = useCallback((opts: { categoryId?: string; subcategoryId?: string; difficulty?: string; count?: number; bookmarkedOnly?: boolean }) => dispatch({ type: "START_QUIZ", payload: opts }), []);
+  const startQuiz = useCallback((opts: { categoryId?: string; subcategoryId?: string; difficulty?: string; count?: number; bookmarkedOnly?: boolean; kahootMode?: boolean }) => dispatch({ type: "START_QUIZ", payload: opts }), []);
   const endQuiz = useCallback((totalTime: number) => dispatch({ type: "END_QUIZ", payload: { totalTime } }), []);
   const submitAnswer = useCallback((questionId: string, answer: string) => dispatch({ type: "SUBMIT_ANSWER", payload: { questionId, answer } }), []);
   const goToQuestion = useCallback((index: number) => dispatch({ type: "GO_TO_QUESTION", payload: index }), []);
@@ -272,6 +466,11 @@ export function QuizProvider({ children }: { children: ReactNode }) {
   const enterReview = useCallback((startIndex?: number) => dispatch({ type: "ENTER_REVIEW", payload: startIndex }), []);
   const exitReview = useCallback(() => dispatch({ type: "EXIT_REVIEW" }), []);
   const reviewGoTo = useCallback((index: number) => dispatch({ type: "REVIEW_GO_TO", payload: index }), []);
+  const kahootCountdownTick = useCallback(() => dispatch({ type: "KAHOOT_COUNTDOWN_TICK" }), []);
+  const kahootUsePowerUp = useCallback((type: PowerUpType) => dispatch({ type: "KAHOOT_USE_POWERUP", payload: type }), []);
+  const kahootDismissDistribution = useCallback(() => dispatch({ type: "KAHOOT_DISMISS_DISTRIBUTION" }), []);
+  const kahootLobbyTick = useCallback(() => dispatch({ type: "KAHOOT_LOBBY_TICK" }), []);
+  const kahootLobbyDone = useCallback(() => dispatch({ type: "KAHOOT_LOBBY_DONE" }), []);
 
   return (
     <QuizContext.Provider value={{
@@ -279,6 +478,8 @@ export function QuizProvider({ children }: { children: ReactNode }) {
       goNext, goPrev, setCategory, setSubcategory, setDifficulty, resetStats,
       toggleBookmark, deleteQuestionById, updateQuestionById,
       enterReview, exitReview, reviewGoTo,
+      kahootCountdownTick, kahootUsePowerUp, kahootDismissDistribution,
+      kahootLobbyTick, kahootLobbyDone,
     }}>
       {children}
     </QuizContext.Provider>
