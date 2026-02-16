@@ -1,6 +1,6 @@
 # İETT Otobüs Bildirim & Takip Sistemi
 
-İstanbul İETT otobüslerini anlık olarak takip eden, seçtiğiniz durağa belirli sayıda durak kala **masaüstü + Telegram bildirimi** gönderen ve **harita üzerinde canlı takip** sunan Python uygulaması.
+İstanbul İETT otobüslerini anlık olarak takip eden, seçtiğiniz durağa belirli sayıda durak kala **masaüstü + Telegram bildirimi** gönderen, **harita üzerinde canlı takip** sunan ve **Android APK** olarak telefonunuza yüklenebilen Python uygulaması.
 
 ## Özellikler
 
@@ -21,6 +21,15 @@
 - **Masaüstü bildirimi**: OS-native bildirimler + sesli uyarı
 - **Telegram bot**: Telefonunuza anlık bildirim (token ile)
 - **Tarayıcı bildirimi**: Web dashboard üzerinden push notification
+
+### Android Mobil Uygulama
+- **Native Android APK**: Kivy + KivyMD ile Material Design arayüz
+- **Harita**: kivy-garden MapView ile canlı otobüs haritası
+- **Android bildirimi**: Native notification + titreşim
+- **Arka plan servisi**: Uygulama kapalıyken bile takip (foreground service)
+- **Favori hat/durak**: Tek dokunuşla takip başlatma
+- **Telegram entegrasyonu**: Uygulama içinden yapılandırma
+- **Offline favori**: İnternet olmasa da favori listesi erişilebilir
 
 ### Gelişmiş
 - **SQLite veritabanı**: Konum geçmişi, bildirim kaydı, favori hatlar
@@ -71,6 +80,79 @@ python main.py --listele 500T      # Hattın durakları
 python main.py --istatistik        # Kayıt istatistikleri
 ```
 
+## Android APK Derleme
+
+### Hızlı Başlangıç
+
+```bash
+cd mobil
+
+# Bağımlılıkları kur
+pip install buildozer cython kivy kivymd pillow requests
+
+# İkonları oluştur
+python create_icons.py
+
+# APK derle (ilk seferde ~20 dakika)
+chmod +x build_apk.sh
+./build_apk.sh
+```
+
+### Adım Adım
+
+**1. Sistem gereksinimleri** (Ubuntu/Debian):
+```bash
+sudo apt install -y python3-pip openjdk-17-jdk \
+    build-essential git zip unzip autoconf libtool \
+    pkg-config zlib1g-dev libncurses5-dev cmake \
+    libffi-dev libssl-dev
+```
+
+**2. Buildozer kur:**
+```bash
+pip install --upgrade buildozer cython
+```
+
+**3. APK derle:**
+```bash
+cd mobil
+
+# Debug APK
+buildozer android debug
+
+# Release APK (imzalı)
+buildozer android release
+```
+
+**4. Telefona yükle:**
+```bash
+# USB ile (ADB gerekli)
+adb install bin/iett_takip-1.0.0-debug.apk
+
+# veya APK dosyasını telefona gönderip
+# Ayarlar > Güvenlik > Bilinmeyen kaynaklar'ı açarak yükleyin
+```
+
+### Windows'ta Derleme
+
+Windows'ta doğrudan buildozer çalışmaz. Seçenekler:
+
+1. **WSL2** (Önerilen): Ubuntu WSL2 kurup yukarıdaki adımları takip edin
+2. **Google Colab**: Ücretsiz GPU instance'da derleyin
+3. **GitHub Actions**: CI/CD ile otomatik APK oluşturun
+
+### Uygulama Ekranları
+
+| Ekran | Açıklama |
+|-------|----------|
+| Ana Sayfa | Hat kodu girişi, hızlı erişim butonları |
+| Hat Seçimi | Tüm hatlar listesi, arama/filtreleme |
+| Durak Seçimi | Hattın durakları sıralı liste |
+| Takip | Anlık otobüs listesi, ETA, kalan durak |
+| Harita | Canlı harita, otobüs/durak marker'ları |
+| Ayarlar | Uyarı, ses, titreşim, Telegram yapılandırma |
+| Favoriler | Kayıtlı hat/durak, tek tıkla başlat |
+
 ## Telegram Bildirimi Kurulumu
 
 1. Telegram'da [@BotFather](https://t.me/BotFather)'a `/newbot` yazın, token alın
@@ -106,13 +188,20 @@ Artık otobüs uyarıları telefonunuza da gelecek.
 ## Mimari
 
 ```
-main.py          CLI giriş noktası + interaktif mod
-web_panel.py     Flask + Leaflet + Socket.IO web dashboard
-iett_api.py      İBB SOAP API istemcisi (retry, cache, timeout)
-takipci.py       Otobüs takip motoru + ETA + çoklu hat desteği
-bildirim.py      Çoklu kanal bildirim (masaüstü, Telegram, web)
-veritabani.py    SQLite (geçmiş, favoriler, ETA verileri)
-config.json      Kullanıcı ayarları
+├── main.py              CLI giriş noktası + interaktif mod
+├── web_panel.py         Flask + Leaflet + Socket.IO web dashboard
+├── iett_api.py          İBB SOAP API istemcisi (retry, cache, timeout)
+├── takipci.py           Otobüs takip motoru + ETA + çoklu hat desteği
+├── bildirim.py          Çoklu kanal bildirim (masaüstü, Telegram, web)
+├── veritabani.py        SQLite (geçmiş, favoriler, ETA verileri)
+├── config.json          Kullanıcı ayarları
+└── mobil/
+    ├── main.py          Kivy/KivyMD Android uygulaması
+    ├── iett_api_mobil.py  Hafif SOAP istemci (zeep yerine requests+XML)
+    ├── service_takip.py   Android arka plan servisi
+    ├── buildozer.spec     APK derleme yapılandırması
+    ├── build_apk.sh       Otomatik derleme scripti
+    └── create_icons.py    İkon/splash oluşturucu
 ```
 
 ### Çalışma Akışı
