@@ -3,20 +3,15 @@
 İETT Otobüs Bildirim & Takip Sistemi
 =====================================
 
-İstanbul İETT otobüslerini anlık takip eder ve seçtiğiniz durağa
-belirli sayıda durak kala masaüstü bildirimi gönderir.
-
 Kullanım:
-    python main.py                  # İnteraktif mod
-    python main.py --hat 500T       # Doğrudan hat belirt
+    python main.py                          # İnteraktif mod
+    python main.py --hat 500T               # Doğrudan hat belirt
     python main.py --hat 500T --durak-kod 123456
     python main.py --hat 500T --durak-ad "Kadıköy"
-    python main.py --listele 500T   # Hattın duraklarını listele
-    python main.py --hatlar         # Tüm hatları listele
-
-Veri Kaynağı:
-    İBB Açık Veri Portalı SOAP API
-    https://data.ibb.gov.tr
+    python main.py --listele 500T           # Duraklarını listele
+    python main.py --hatlar                 # Tüm hatları listele
+    python main.py --web                    # Web dashboard başlat
+    python main.py --favoriler              # Favori listesinden takip başlat
 """
 
 import argparse
@@ -26,13 +21,14 @@ import os
 import sys
 
 from iett_api import IETTApi, IETTApiError
-from takipci import OtobusTakipci
+from takipci import OtobusTakipci, CokluTakipci
+from bildirim import BildirimYoneticisi
+from veritabani import Veritabani
 
 CONFIG_DOSYASI = os.path.join(os.path.dirname(__file__), "config.json")
 
 
 def konfigurasyon_yukle() -> dict:
-    """config.json dosyasından ayarları yükler."""
     varsayilan = {
         "hat_kodu": "",
         "hedef_durak_kodu": "",
@@ -40,37 +36,35 @@ def konfigurasyon_yukle() -> dict:
         "uyari_durak_sayisi": 3,
         "kontrol_araligi_saniye": 30,
         "bildirim_sesi": True,
+        "telegram_token": "",
+        "telegram_chat_id": "",
     }
     if os.path.exists(CONFIG_DOSYASI):
         try:
             with open(CONFIG_DOSYASI, "r", encoding="utf-8") as f:
-                kayitli = json.load(f)
-                varsayilan.update(kayitli)
-        except (json.JSONDecodeError, OSError) as e:
-            logging.warning("config.json okunamadı: %s", e)
+                varsayilan.update(json.load(f))
+        except (json.JSONDecodeError, OSError):
+            pass
     return varsayilan
 
 
 def konfigurasyon_kaydet(config: dict) -> None:
-    """Ayarları config.json dosyasına kaydeder."""
     try:
         with open(CONFIG_DOSYASI, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=4)
-    except OSError as e:
-        logging.warning("config.json yazılamadı: %s", e)
+    except OSError:
+        pass
 
 
 def hatlari_listele() -> None:
-    """Tüm İETT hatlarını listeler."""
     api = IETTApi()
     print("İETT hat listesi yükleniyor...")
     try:
         hatlar = api.tum_hatlari_getir()
         if not hatlar:
-            print("Hat listesi boş döndü. API erişilemez olabilir.")
+            print("Hat listesi boş. API erişilemez olabilir.")
             return
-
-        print(f"\nToplam {len(hatlar)} hat bulundu:\n")
+        print(f"\nToplam {len(hatlar)} hat:\n")
         for hat in hatlar:
             kod = hat.get("SHESSION", hat.get("SHATNO", "?"))
             aciklama = hat.get("TAESSION", hat.get("SHATADI", ""))
@@ -80,7 +74,6 @@ def hatlari_listele() -> None:
 
 
 def duraklari_listele(hat_kodu: str) -> None:
-    """Bir hattın duraklarını listeler."""
     takipci = OtobusTakipci(hat_kodu=hat_kodu)
     print(f"Hat '{hat_kodu}' durak listesi yükleniyor...")
     try:
@@ -88,9 +81,8 @@ def duraklari_listele(hat_kodu: str) -> None:
         if not duraklar:
             print("Durak bilgisi bulunamadı.")
             return
-
         print(f"\nHat {hat_kodu} - {len(duraklar)} durak:\n")
-        print(f"  {'Sıra':>5s}  {'Durak Kodu':>12s}  {'Durak Adı'}")
+        print(f"  {'Sıra':>5s}  {'Kod':>12s}  {'Durak Adı'}")
         print(f"  {'─' * 5}  {'─' * 12}  {'─' * 40}")
         for durak in duraklar:
             print(f"  {durak.sira:5d}  {durak.kod:>12s}  {durak.ad}")
@@ -98,22 +90,39 @@ def duraklari_listele(hat_kodu: str) -> None:
         print(f"Hata: {e}")
 
 
+def favoriler_goster(db: Veritabani) -> None:
+    favoriler = db.favorileri_getir()
+    if not favoriler:
+        print("Kayıtlı favori yok. Web panelden veya --favori-ekle ile ekleyebilirsiniz.")
+        return
+
+    print(f"\nFavoriler ({len(favoriler)} kayıt):\n")
+    for i, f in enumerate(favoriler, 1):
+        print(f"  {i}. Hat {f.hat_kodu} -> {f.durak_adi} ({f.uyari_durak_sayisi} durak kala)")
+
+    secim = input("\nTakip başlatmak için numara girin (0=çık): ").strip()
+    try:
+        idx = int(secim)
+        if 1 <= idx <= len(favoriler):
+            fav = favoriler[idx - 1]
+            return fav
+    except ValueError:
+        pass
+    return None
+
+
 def interaktif_hat_sec() -> str:
-    """Kullanıcıdan hat kodu alır."""
     print("\n" + "=" * 60)
     print("  İETT Otobüs Bildirim Sistemi")
-    print("  İstanbul Otobüs Takip & Uyarı")
     print("=" * 60)
-
     while True:
-        hat_kodu = input("\nHat kodu girin (örn: 500T, 34BZ, 15F): ").strip().upper()
+        hat_kodu = input("\nHat kodu girin (örn: 500T, 34BZ): ").strip().upper()
         if hat_kodu:
             return hat_kodu
-        print("Lütfen geçerli bir hat kodu girin.")
+        print("Geçerli bir hat kodu girin.")
 
 
 def interaktif_durak_sec(takipci: OtobusTakipci) -> None:
-    """Kullanıcıya duraklardan birini seçtirir."""
     try:
         duraklar = takipci.duraklari_listele()
     except IETTApiError as e:
@@ -127,135 +136,145 @@ def interaktif_durak_sec(takipci: OtobusTakipci) -> None:
     print(f"\nHat {takipci.hat_kodu} durakları:")
     print(f"  {'No':>4s}  {'Durak Adı'}")
     print(f"  {'─' * 4}  {'─' * 45}")
-
     for durak in duraklar:
         print(f"  {durak.sira:4d}  {durak.ad}")
 
     print()
     while True:
-        secim = input("Hedef durak sıra numarasını girin: ").strip()
+        secim = input("Hedef durak sıra numarası: ").strip()
         try:
             sira = int(secim)
             for durak in duraklar:
                 if durak.sira == sira:
                     takipci.hedef_durak_kodu = durak.kod
                     takipci.hedef_durak = durak
-                    print(f"\nSeçilen durak: [{durak.kod}] {durak.ad}")
+                    print(f"\nSeçilen: [{durak.kod}] {durak.ad}")
                     return
-            print("Geçersiz sıra numarası. Tekrar deneyin.")
+            print("Geçersiz numara.")
         except ValueError:
-            print("Lütfen bir sayı girin.")
+            print("Sayı girin.")
 
 
 def main() -> None:
-    """Ana giriş noktası."""
     parser = argparse.ArgumentParser(
         description="İETT Otobüs Bildirim & Takip Sistemi",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Örnekler:
-  %(prog)s --hat 500T                    İnteraktif durak seçimi
-  %(prog)s --hat 500T --durak-kod 123456 Direkt takip başlat
-  %(prog)s --hat 500T --durak-ad Kadıköy İsimle durak ara
-  %(prog)s --listele 500T                Hattın duraklarını listele
-  %(prog)s --hatlar                      Tüm hatları listele
-  %(prog)s --hat 500T --kala 5           5 durak kala uyar
-
-Veri Kaynağı: İBB Açık Veri Portalı (data.ibb.gov.tr)
+  %(prog)s --hat 500T --durak-ad Kadıköy   CLI takip
+  %(prog)s --web                            Web dashboard
+  %(prog)s --web --port 8080                Farklı port
+  %(prog)s --favoriler                      Favorilerden takip
+  %(prog)s --listele 500T                   Durak listesi
+  %(prog)s --hatlar                         Tüm hatlar
         """,
     )
 
     parser.add_argument("--hat", type=str, help="Hat kodu (örn: 500T)")
     parser.add_argument("--durak-kod", type=str, help="Hedef durak kodu")
-    parser.add_argument("--durak-ad", type=str, help="Hedef durak adı (kısmi eşleşme)")
-    parser.add_argument(
-        "--kala", type=int, default=None,
-        help="Kaç durak kala uyarı verilsin (varsayılan: 3)",
-    )
-    parser.add_argument(
-        "--aralik", type=int, default=None,
-        help="Kontrol aralığı - saniye (varsayılan: 30)",
-    )
-    parser.add_argument(
-        "--sessiz", action="store_true",
-        help="Bildirim sesini kapat",
-    )
-    parser.add_argument(
-        "--listele", type=str, metavar="HAT_KODU",
-        help="Hattın duraklarını listele",
-    )
-    parser.add_argument(
-        "--hatlar", action="store_true",
-        help="Tüm İETT hatlarını listele",
-    )
-    parser.add_argument(
-        "--debug", action="store_true",
-        help="Debug loglarını göster",
-    )
+    parser.add_argument("--durak-ad", type=str, help="Hedef durak adı")
+    parser.add_argument("--kala", type=int, help="Kaç durak kala uyarı (varsayılan: 3)")
+    parser.add_argument("--aralik", type=int, help="Kontrol aralığı saniye (varsayılan: 30)")
+    parser.add_argument("--sessiz", action="store_true", help="Ses kapalı")
+    parser.add_argument("--listele", type=str, metavar="HAT", help="Hattın duraklarını listele")
+    parser.add_argument("--hatlar", action="store_true", help="Tüm hatları listele")
+    parser.add_argument("--web", action="store_true", help="Web dashboard başlat")
+    parser.add_argument("--port", type=int, default=5000, help="Web dashboard portu")
+    parser.add_argument("--favoriler", action="store_true", help="Favorilerden takip başlat")
+    parser.add_argument("--istatistik", action="store_true", help="İstatistikleri göster")
+    parser.add_argument("--debug", action="store_true", help="Debug logları")
 
     args = parser.parse_args()
 
-    # Loglama ayarı
-    log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(
-        level=log_level,
+        level=logging.DEBUG if args.debug else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
 
-    # Tüm hatları listele
+    # Web dashboard modu
+    if args.web:
+        from web_panel import main as web_main
+        sys.argv = ["web_panel.py", "--port", str(args.port)]
+        if args.debug:
+            sys.argv.append("--debug")
+        web_main()
+        return
+
+    # Tüm hatlar
     if args.hatlar:
         hatlari_listele()
         return
 
-    # Belirli bir hattın duraklarını listele
+    # Durak listesi
     if args.listele:
         duraklari_listele(args.listele)
         return
 
-    # Konfigürasyon yükle
+    # DB & config
+    db = Veritabani()
     config = konfigurasyon_yukle()
 
-    # Hat kodunu belirle
+    # İstatistik
+    if args.istatistik:
+        stats = db.istatistik_getir()
+        print("\nİstatistikler:")
+        print(f"  Toplam konum kaydı: {stats['toplam_konum_kaydi']}")
+        print(f"  Toplam bildirim:    {stats['toplam_bildirim']}")
+        print(f"  Toplam favori:      {stats['toplam_favori']}")
+        return
+
+    # Favorilerden seç
+    if args.favoriler:
+        fav = favoriler_goster(db)
+        if fav is None:
+            return
+        args.hat = fav.hat_kodu
+        args.durak_kod = fav.durak_kodu
+        args.kala = fav.uyari_durak_sayisi
+
+    # Bildirim yöneticisi
+    bildirim_yon = BildirimYoneticisi(
+        masaustu=True,
+        ses=not args.sessiz and config.get("bildirim_sesi", True),
+        telegram_token=config.get("telegram_token", ""),
+        telegram_chat_id=config.get("telegram_chat_id", ""),
+    )
+
+    # Hat kodu
     hat_kodu = args.hat or config.get("hat_kodu", "")
     if not hat_kodu:
         hat_kodu = interaktif_hat_sec()
 
-    # Takipci oluştur
+    # Takipci
     takipci = OtobusTakipci(
         hat_kodu=hat_kodu,
         hedef_durak_kodu=args.durak_kod or config.get("hedef_durak_kodu", ""),
         hedef_durak_adi=args.durak_ad or config.get("hedef_durak_adi", ""),
         uyari_durak_sayisi=args.kala or config.get("uyari_durak_sayisi", 3),
         kontrol_araligi=args.aralik or config.get("kontrol_araligi_saniye", 30),
-        bildirim_sesi=not args.sessiz and config.get("bildirim_sesi", True),
+        bildirim=bildirim_yon,
+        veritabani=db,
     )
 
-    # Hedef durak belirlenmemişse interaktif seç
     if not takipci.hedef_durak_kodu and not takipci.hedef_durak_adi:
         interaktif_durak_sec(takipci)
 
-    # Ayarları kaydet
+    # Config kaydet
     config.update({
         "hat_kodu": hat_kodu,
         "hedef_durak_kodu": takipci.hedef_durak_kodu,
         "hedef_durak_adi": takipci.hedef_durak_adi,
         "uyari_durak_sayisi": takipci.uyari_durak_sayisi,
         "kontrol_araligi_saniye": takipci.kontrol_araligi,
-        "bildirim_sesi": takipci.bildirim_sesi,
     })
     konfigurasyon_kaydet(config)
 
-    # Takibi başlat
     try:
         takipci.takip_baslat()
     except IETTApiError as e:
         print(f"\nAPI Hatası: {e}")
         print("İBB SOAP servisleri gece 00:15'ten sonra kapatılır.")
-        print("Lütfen daha sonra tekrar deneyin.")
-        sys.exit(1)
-    except Exception as e:
-        logging.exception("Beklenmeyen hata:")
         sys.exit(1)
 
 

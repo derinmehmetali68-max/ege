@@ -1,68 +1,94 @@
 # İETT Otobüs Bildirim & Takip Sistemi
 
-İstanbul İETT otobüslerini anlık olarak takip eden ve seçtiğiniz durağa belirli sayıda durak kala **masaüstü bildirimi** gönderen Python uygulaması.
+İstanbul İETT otobüslerini anlık olarak takip eden, seçtiğiniz durağa belirli sayıda durak kala **masaüstü + Telegram bildirimi** gönderen ve **harita üzerinde canlı takip** sunan Python uygulaması.
 
 ## Özellikler
 
-- **Anlık otobüs takibi**: İBB Açık Veri SOAP API üzerinden hat bazlı canlı otobüs konumları
-- **Durak yaklaşma uyarısı**: Hedef durağınıza X durak kala masaüstü bildirimi
-- **Çapraz platform bildirim**: Linux (notify-send), macOS (osascript), Windows (toast notification)
-- **Sesli uyarı**: Bildirim ile birlikte sesli ikaz
-- **İnteraktif mod**: Hat ve durak seçimini adım adım yapın
-- **Komut satırı desteği**: Parametrelerle doğrudan çalıştırın
-- **Konfigürasyon dosyası**: Son ayarlarınız `config.json`'da saklanır
+### Temel
+- **Anlık otobüs takibi**: İBB SOAP API üzerinden hat bazlı canlı GPS konumları
+- **Durak yaklaşma uyarısı**: Hedef durağınıza X durak kala otomatik bildirim
+- **ETA tahmini**: Geçmiş verilere, hıza veya mesafeye dayalı tahmini varış süresi
+- **Çapraz platform bildirim**: Linux (notify-send), macOS (osascript), Windows (toast)
+
+### Web Dashboard
+- **Gerçek zamanlı harita**: Leaflet.js ile otobüsleri harita üzerinde canlı izleme
+- **Socket.IO**: Anlık güncelleme, sayfa yenilemesiz veri akışı
+- **Tarayıcı bildirimi**: Web push notification desteği
+- **Favori yönetimi**: Sık kullandığınız hat/durak kombinasyonlarını kaydetme
+- **Responsive tasarım**: Mobil ve masaüstünde çalışır
+
+### Bildirim Kanalları
+- **Masaüstü bildirimi**: OS-native bildirimler + sesli uyarı
+- **Telegram bot**: Telefonunuza anlık bildirim (token ile)
+- **Tarayıcı bildirimi**: Web dashboard üzerinden push notification
+
+### Gelişmiş
+- **SQLite veritabanı**: Konum geçmişi, bildirim kaydı, favori hatlar
+- **ETA öğrenme**: Geçmiş varış sürelerinden gün tipi ve saat dilimine göre ortalama
+- **Çoklu hat takibi**: Birden fazla hattı aynı anda thread bazlı izleme
+- **API önbellekleme**: Statik veriler (hatlar, duraklar) cache'lenir
+- **Retry & timeout**: Bağlantı kopsa bile otomatik yeniden deneme
+- **Bildirim TTL**: Aynı bildirimin 10 dakika içinde tekrarlanmaması
 
 ## Kurulum
 
 ```bash
-# Gerekli paketleri yükleyin
 pip install -r requirements.txt
 
-# Linux'ta bildirim desteği için (Ubuntu/Debian)
+# Linux bildirim (opsiyonel)
 sudo apt install libnotify-bin
-
-# Linux'ta ses desteği için (opsiyonel)
-sudo apt install pulseaudio-utils
 ```
 
 ## Kullanım
 
-### İnteraktif Mod
+### 1. Web Dashboard (Önerilen)
 ```bash
+python main.py --web
+# veya farklı port
+python main.py --web --port 8080
+```
+Tarayıcınızda `http://localhost:5000` adresini açın.
+
+### 2. Komut Satırı
+```bash
+# İnteraktif mod
 python main.py
-```
-Hat kodunu girin, durak listesinden hedef durağınızı seçin, takip otomatik başlasın.
 
-### Komut Satırı
+# Doğrudan takip
+python main.py --hat 500T --durak-ad "Kadıköy" --kala 3
+
+# 5 durak kala, 20 saniye aralıkla
+python main.py --hat 34BZ --durak-ad "Beşiktaş" --kala 5 --aralik 20
+
+# Favorilerden başlat
+python main.py --favoriler
+```
+
+### 3. Bilgi Komutları
 ```bash
-# Belirli hat ve durak kodu ile
-python main.py --hat 500T --durak-kod 123456
-
-# Durak adı ile arama (kısmi eşleşme)
-python main.py --hat 500T --durak-ad "Kadıköy"
-
-# 5 durak kala uyar, 20 saniye aralıkla kontrol et
-python main.py --hat 500T --durak-ad "Beşiktaş" --kala 5 --aralik 20
-
-# Sessiz mod (ses kapalı)
-python main.py --hat 34BZ --durak-ad "Taksim" --sessiz
+python main.py --hatlar            # Tüm İETT hatları
+python main.py --listele 500T      # Hattın durakları
+python main.py --istatistik        # Kayıt istatistikleri
 ```
 
-### Bilgi Komutları
-```bash
-# Tüm İETT hatlarını listele
-python main.py --hatlar
+## Telegram Bildirimi Kurulumu
 
-# Bir hattın duraklarını listele
-python main.py --listele 500T
+1. Telegram'da [@BotFather](https://t.me/BotFather)'a `/newbot` yazın, token alın
+2. Botunuza mesaj gönderin, sonra `https://api.telegram.org/bot<TOKEN>/getUpdates` ile `chat_id`'nizi öğrenin
+3. `config.json`'a ekleyin:
 
-# Debug modu
-python main.py --hat 500T --debug
+```json
+{
+    "telegram_token": "123456789:ABCdefGhIjKlMnOpQrStUvWxYz",
+    "telegram_chat_id": "987654321"
+}
 ```
+
+Artık otobüs uyarıları telefonunuza da gelecek.
 
 ## Yapılandırma
 
-`config.json` dosyası ile varsayılan ayarları belirleyebilirsiniz:
+`config.json`:
 
 ```json
 {
@@ -71,37 +97,36 @@ python main.py --hat 500T --debug
     "hedef_durak_adi": "",
     "uyari_durak_sayisi": 3,
     "kontrol_araligi_saniye": 30,
-    "bildirim_sesi": true
+    "bildirim_sesi": true,
+    "telegram_token": "",
+    "telegram_chat_id": ""
 }
 ```
-
-| Alan | Açıklama | Varsayılan |
-|------|----------|------------|
-| `hat_kodu` | Takip edilecek hat | `""` |
-| `hedef_durak_kodu` | Hedef durak kodu | `""` |
-| `hedef_durak_adi` | Hedef durak adı (kısmi eşleşme) | `""` |
-| `uyari_durak_sayisi` | Kaç durak kala uyarı | `3` |
-| `kontrol_araligi_saniye` | API kontrol sıklığı (sn) | `30` |
-| `bildirim_sesi` | Sesli bildirim | `true` |
 
 ## Mimari
 
 ```
-main.py        → Ana uygulama (CLI + interaktif mod)
-iett_api.py    → İBB SOAP API istemcisi (zeep)
-takipci.py     → Otobüs takip motoru & durak yakınlık hesabı
-bildirim.py    → Çapraz platform masaüstü bildirim sistemi
-config.json    → Kullanıcı ayarları
+main.py          CLI giriş noktası + interaktif mod
+web_panel.py     Flask + Leaflet + Socket.IO web dashboard
+iett_api.py      İBB SOAP API istemcisi (retry, cache, timeout)
+takipci.py       Otobüs takip motoru + ETA + çoklu hat desteği
+bildirim.py      Çoklu kanal bildirim (masaüstü, Telegram, web)
+veritabani.py    SQLite (geçmiş, favoriler, ETA verileri)
+config.json      Kullanıcı ayarları
 ```
 
-### Nasıl Çalışır
+### Çalışma Akışı
 
-1. **Hat durakları yüklenir**: SOAP API'den hat güzergahındaki duraklar sıralı olarak çekilir
-2. **Hedef durak belirlenir**: Kullanıcının seçtiği durak sıra numarası kaydedilir
-3. **Otobüs konumları sorgulanır**: Periyodik olarak hat üzerindeki otobüslerin GPS konumları alınır
-4. **En yakın durak hesaplanır**: Her otobüsün Haversine formülü ile en yakın durağı bulunur
-5. **Kalan durak sayısı hesaplanır**: Otobüsün bulunduğu durak ile hedef durak arasındaki fark
-6. **Bildirim gönderilir**: Eşik değere (varsayılan 3 durak) ulaşınca masaüstü bildirimi
+```
+1. Hat durakları SOAP API'den çekilir (cache'lenir)
+2. Kullanıcı hedef durağı seçer
+3. Her 30 saniyede otobüs GPS konumları sorgulanır
+4. Haversine formülü ile her otobüsün en yakın durağı bulunur
+5. Kalan durak sayısı ve ETA hesaplanır
+6. Eşik değere ulaşınca tüm kanallardan bildirim gönderilir
+7. Konum ve bildirim geçmişi SQLite'a kaydedilir
+8. Web dashboard Socket.IO ile anlık güncellenir
+```
 
 ## Veri Kaynağı
 
@@ -109,19 +134,18 @@ config.json    → Kullanıcı ayarları
 - **SOAP WSDL**: `https://api.ibb.gov.tr/iett/UlasimAnaVeri/HatDurakGuzergah.asmx?wsdl`
 - **API Kısıtlaması**: Servisler her gece 00:15'ten sonra kapatılır
 
-## İlgili Projeler & Kaynaklar
+## İlgili Projeler
 
 - [Otobüsüm Nerede](https://play.google.com/store/apps/details?id=com.iett.otobusumnerede) - İETT resmi uygulaması
 - [iettnext](https://github.com/Rednexie/iettnext) - Açık kaynak İstanbul ulaşım uygulaması
 - [dataibbgovtr](https://github.com/hakanatak/dataibbgovtr) - İBB İETT GeoJSON API
 - [IBB.Api](https://github.com/AydinAdn/IBB.Api) - .NET İETT istemci kütüphanesi
-- [On-Transit-App](https://github.com/EKarton/On-Transit-App) - Otobüs yaklaşma bildirimi (genel)
-- [İBB Mekansal Açık Veri](https://medium.com/@hakanatak34/i%CC%87bb-mekansal-a%C3%A7%C4%B1k-veri-api-d6dbe16bcb61) - API kullanım rehberi
+- [On-Transit-App](https://github.com/EKarton/On-Transit-App) - Otobüs yaklaşma bildirimi
+- [SG Bus Telegram Bot](https://github.com/guanquann/sg-bus-telegram-bot) - Singapur otobüs Telegram botu
+- [Bus_Guide](https://github.com/wael-zegneni/Bus_Guide) - Flask + Leaflet canlı otobüs haritası
 
 ## Gereksinimler
 
 - Python 3.10+
 - İnternet bağlantısı
-- Linux: `libnotify-bin` (bildirim için)
-- Windows: Ek paket gerekmez
-- macOS: Ek paket gerekmez
+- Linux: `libnotify-bin` (bildirim için, opsiyonel)

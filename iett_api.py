@@ -12,10 +12,16 @@ API Kaynak: https://api.ibb.gov.tr/iett/UlasimAnaVeri/HatDurakGuzergah.asmx?wsdl
 
 import json
 import logging
+import math
+import time
 from typing import Optional
 
+from requests import Session
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from zeep import Client
 from zeep.exceptions import Fault, TransportError
+from zeep.transports import Transport
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +29,11 @@ logger = logging.getLogger(__name__)
 HAT_DURAK_GUZERGAH_WSDL = (
     "https://api.ibb.gov.tr/iett/UlasimAnaVeri/HatDurakGuzergah.asmx?wsdl"
 )
-FILO_YONETIM_WSDL = (
-    "https://api.ibb.gov.tr/iett/FiloYonetim/SeferGercworkleme.asmx?wsdl"
-)
+
+# Varsayılan ayarlar
+DEFAULT_TIMEOUT = 30  # saniye
+MAX_RETRIES = 3
+RETRY_BACKOFF = 1.5  # saniye
 
 
 class IETTApiError(Exception):
@@ -34,29 +42,78 @@ class IETTApiError(Exception):
 
 
 class IETTApi:
-    """İBB/İETT SOAP API istemcisi."""
+    """
+    İBB/İETT SOAP API istemcisi.
 
-    def __init__(self):
-        self._hat_durak_client: Optional[Client] = None
-        self._filo_client: Optional[Client] = None
+    Retry logic, timeout, connection pooling ve basit önbellekleme içerir.
+    """
 
-    def _get_hat_durak_client(self) -> Client:
-        if self._hat_durak_client is None:
+    def __init__(self, timeout: int = DEFAULT_TIMEOUT):
+        self._client: Optional[Client] = None
+        self._timeout = timeout
+
+        # Statik veri önbelleği: {anahtar: (zaman_damgasi, veri)}
+        self._cache: dict[str, tuple[float, list[dict]]] = {}
+        self._cache_ttl = {
+            "hatlar": 3600,       # Hat listesi: 1 saat
+            "hat_durak": 1800,    # Hat durakları: 30 dakika
+            "durak": 1800,        # Durak bilgisi: 30 dakika
+            "otobus_konum": 0,    # Anlık konum: önbellek yok
+        }
+
+    def _create_session(self) -> Session:
+        """Retry logic ile HTTP session oluşturur."""
+        session = Session()
+        retry_strategy = Retry(
+            total=MAX_RETRIES,
+            backoff_factor=RETRY_BACKOFF,
+            status_forcelist=[500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=5,
+            pool_maxsize=10,
+        )
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
+
+    def _get_client(self) -> Client:
+        if self._client is None:
             try:
-                self._hat_durak_client = Client(HAT_DURAK_GUZERGAH_WSDL)
-                logger.info("Hat/Durak SOAP istemcisi bağlandı.")
+                session = self._create_session()
+                transport = Transport(
+                    session=session,
+                    timeout=self._timeout,
+                    operation_timeout=self._timeout,
+                )
+                self._client = Client(HAT_DURAK_GUZERGAH_WSDL, transport=transport)
+                logger.info("SOAP istemcisi bağlandı.")
             except Exception as e:
                 raise IETTApiError(f"SOAP servisine bağlanılamadı: {e}")
-        return self._hat_durak_client
+        return self._client
 
-    def _get_filo_client(self) -> Client:
-        if self._filo_client is None:
-            try:
-                self._filo_client = Client(FILO_YONETIM_WSDL)
-                logger.info("Filo Yönetim SOAP istemcisi bağlandı.")
-            except Exception as e:
-                raise IETTApiError(f"Filo SOAP servisine bağlanılamadı: {e}")
-        return self._filo_client
+    def _cache_get(self, category: str, key: str) -> Optional[list[dict]]:
+        """Önbellekten veri getirir. TTL geçmişse None döner."""
+        cache_key = f"{category}:{key}"
+        if cache_key in self._cache:
+            ts, data = self._cache[cache_key]
+            ttl = self._cache_ttl.get(category, 0)
+            if ttl > 0 and (time.time() - ts) < ttl:
+                logger.debug("Önbellek hit: %s", cache_key)
+                return data
+        return None
+
+    def _cache_set(self, category: str, key: str, data: list[dict]) -> None:
+        """Veriyi önbelleğe yazar."""
+        ttl = self._cache_ttl.get(category, 0)
+        if ttl > 0:
+            cache_key = f"{category}:{key}"
+            self._cache[cache_key] = (time.time(), data)
+
+    def cache_temizle(self) -> None:
+        """Tüm önbelleği temizler."""
+        self._cache.clear()
 
     def _parse_json_response(self, raw: str) -> list[dict]:
         """SOAP'tan dönen JSON string'i parse eder."""
@@ -68,144 +125,73 @@ class IETTApi:
             logger.error("JSON parse hatası: %s", e)
             return []
 
-    def durak_getir(self, durak_kodu: str = "") -> list[dict]:
+    def _api_cagri(self, method_name: str, **kwargs) -> list[dict]:
         """
-        Durak bilgilerini getirir.
+        SOAP API çağrısı yapar, retry logic ile.
 
         Args:
-            durak_kodu: Belirli bir durak kodu. Boş bırakılırsa tüm duraklar döner.
+            method_name: SOAP metod adı
+            **kwargs: Metoda geçilecek parametreler
 
         Returns:
-            Durak listesi. Her durak şu alanları içerir:
-            - SDURAKKODU: Durak kodu
-            - SDURAKADI: Durak adı
-            - KOORDINAT: Koordinat bilgisi
-            - ILCEADI: İlçe adı
-            - SYON: Yön bilgisi
-            - AKILLI: Akıllı durak mı
-            - FIZIKI: Fiziki durak bilgisi
-            - DURAK_TIPI: Durak tipi
-            - ENGELLIKULLANIM: Engelli kullanımı
+            Parse edilmiş JSON listesi
         """
-        try:
-            client = self._get_hat_durak_client()
-            result = client.service.GetDurak_json(DurakKodu=durak_kodu)
-            return self._parse_json_response(result)
-        except (Fault, TransportError) as e:
-            raise IETTApiError(f"Durak verisi alınamadı: {e}")
+        last_error = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                client = self._get_client()
+                method = getattr(client.service, method_name)
+                result = method(**kwargs)
+                return self._parse_json_response(result)
+            except (Fault, TransportError, Exception) as e:
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    wait = RETRY_BACKOFF * (2 ** (attempt - 1))
+                    logger.warning(
+                        "API çağrısı başarısız (deneme %d/%d): %s. %0.1fs sonra tekrar...",
+                        attempt, MAX_RETRIES, e, wait,
+                    )
+                    time.sleep(wait)
+                    # Bağlantıyı sıfırla
+                    self._client = None
+
+        raise IETTApiError(f"API çağrısı {MAX_RETRIES} denemeden sonra başarısız: {last_error}")
+
+    def durak_getir(self, durak_kodu: str = "") -> list[dict]:
+        """Durak bilgilerini getirir."""
+        cached = self._cache_get("durak", durak_kodu)
+        if cached is not None:
+            return cached
+        data = self._api_cagri("GetDurak_json", DurakKodu=durak_kodu)
+        self._cache_set("durak", durak_kodu, data)
+        return data
 
     def hat_durak_getir(self, hat_kodu: str) -> list[dict]:
-        """
-        Bir hattın durak listesini sıralı olarak getirir.
-
-        Args:
-            hat_kodu: Hat kodu (örn: "500T", "34BZ")
-
-        Returns:
-            Hattın durak listesi (sıralı). Her kayıt şu alanları içerir:
-            - HESSION: Hat yön bilgisi
-            - SIESSION: Sıra numarası
-            - DURESSION: Durak kodu
-            - DAESSION: Durak adı
-            - XKOORD: X koordinatı (Boylam)
-            - YKOORD: Y koordinatı (Enlem)
-            - DUESSION: Durak tipi
-            - ISESSION: İlçe
-        """
-        try:
-            client = self._get_hat_durak_client()
-            result = client.service.GetDurakDetay_json(hat_kodu=hat_kodu)
-            return self._parse_json_response(result)
-        except (Fault, TransportError) as e:
-            raise IETTApiError(f"Hat durak detayı alınamadı: {e}")
+        """Bir hattın durak listesini sıralı olarak getirir."""
+        cached = self._cache_get("hat_durak", hat_kodu)
+        if cached is not None:
+            return cached
+        data = self._api_cagri("GetDurakDetay_json", hat_kodu=hat_kodu)
+        self._cache_set("hat_durak", hat_kodu, data)
+        return data
 
     def hat_otobusleri_getir(self, hat_kodu: str) -> list[dict]:
-        """
-        Bir hat üzerindeki otobüslerin anlık konumlarını getirir.
-
-        Args:
-            hat_kodu: Hat kodu (örn: "500T", "34BZ")
-
-        Returns:
-            Otobüs konum listesi. Her kayıt şu alanları içerir:
-            - Operator: Operatör
-            - Garaj: Garaj adı
-            - KapiNo: Kapı numarası
-            - Saat: Zaman damgası
-            - Boylam: Boylam (longitude)
-            - Enlem: Enlem (latitude)
-            - Hiz: Hız (km/s)
-            - Plaka: Araç plakası
-        """
-        try:
-            client = self._get_hat_durak_client()
-            result = client.service.GetHatOtobusleri_json(HatKodu=hat_kodu)
-            return self._parse_json_response(result)
-        except (Fault, TransportError) as e:
-            raise IETTApiError(f"Hat otobüsleri alınamadı: {e}")
+        """Bir hat üzerindeki otobüslerin anlık konumlarını getirir (önbellek yok)."""
+        return self._api_cagri("GetHatOtobusleri_json", HatKodu=hat_kodu)
 
     def tum_hatlari_getir(self) -> list[dict]:
-        """
-        Tüm İETT hat bilgilerini getirir.
-
-        Returns:
-            Hat listesi. Her kayıt şu alanları içerir:
-            - SHESSION: Hat kodu
-            - TAESSION: Hat açıklaması
-        """
-        try:
-            client = self._get_hat_durak_client()
-            result = client.service.GetHat_json(HatKodu="")
-            return self._parse_json_response(result)
-        except (Fault, TransportError) as e:
-            raise IETTApiError(f"Hat listesi alınamadı: {e}")
-
-    def yakin_duraklar_getir(self, enlem: float, boylam: float) -> list[dict]:
-        """
-        Koordinata en yakın durakları getirir.
-
-        Args:
-            enlem: Enlem (latitude)
-            boylam: Boylam (longitude)
-
-        Returns:
-            Yakın durak listesi.
-        """
-        try:
-            client = self._get_hat_durak_client()
-            result = client.service.GetDurak_json(DurakKodu="")
-            duraklar = self._parse_json_response(result)
-
-            # Koordinat alanını parse et ve mesafe hesapla
-            for durak in duraklar:
-                koord = durak.get("KOORDINAT", "")
-                if koord:
-                    try:
-                        parts = koord.split(",")
-                        if len(parts) == 2:
-                            d_enlem = float(parts[0].strip())
-                            d_boylam = float(parts[1].strip())
-                            durak["_enlem"] = d_enlem
-                            durak["_boylam"] = d_boylam
-                            durak["_mesafe"] = self._haversine(
-                                enlem, boylam, d_enlem, d_boylam
-                            )
-                    except ValueError:
-                        durak["_mesafe"] = float("inf")
-                else:
-                    durak["_mesafe"] = float("inf")
-
-            duraklar.sort(key=lambda d: d.get("_mesafe", float("inf")))
-            return duraklar[:10]
-        except (Fault, TransportError) as e:
-            raise IETTApiError(f"Yakın duraklar alınamadı: {e}")
+        """Tüm İETT hat bilgilerini getirir."""
+        cached = self._cache_get("hatlar", "all")
+        if cached is not None:
+            return cached
+        data = self._api_cagri("GetHat_json", HatKodu="")
+        self._cache_set("hatlar", "all", data)
+        return data
 
     @staticmethod
-    def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """İki koordinat arasındaki mesafeyi metre cinsinden hesaplar."""
-        import math
-
-        R = 6371000  # Dünya yarıçapı (metre)
+        R = 6371000
         phi1, phi2 = math.radians(lat1), math.radians(lat2)
         dphi = math.radians(lat2 - lat1)
         dlambda = math.radians(lon2 - lon1)

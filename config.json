@@ -4,5 +4,7 @@
     "hedef_durak_adi": "",
     "uyari_durak_sayisi": 3,
     "kontrol_araligi_saniye": 30,
-    "bildirim_sesi": true
+    "bildirim_sesi": true,
+    "telegram_token": "",
+    "telegram_chat_id": ""
 }
