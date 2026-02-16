@@ -1,0 +1,5 @@
+zeep>=4.2.1
+requests>=2.31.0
+plyer>=2.1.0
+geopy>=2.4.1
+schedule>=1.2.0

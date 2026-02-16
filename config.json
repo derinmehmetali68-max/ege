@@ -1,0 +1,8 @@
+{
+    "hat_kodu": "500T",
+    "hedef_durak_kodu": "",
+    "hedef_durak_adi": "",
+    "uyari_durak_sayisi": 3,
+    "kontrol_araligi_saniye": 30,
+    "bildirim_sesi": true
+}
