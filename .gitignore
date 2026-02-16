@@ -8,3 +8,8 @@ venv/
 *.egg-info/
 dist/
 build/
+.buildozer/
+mobil/.buildozer/
+mobil/bin/
+mobil/data/
+mobil/bus_marker.png
