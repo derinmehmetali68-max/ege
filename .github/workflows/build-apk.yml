@@ -1,0 +1,91 @@
+name: Android APK Build
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'mobil/**'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'mobil/**'
+  workflow_dispatch:  # Manuel tetikleme
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential git zip unzip \
+            autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev \
+            libncursesw5-dev cmake \
+            libffi-dev libssl-dev \
+            lbzip2 patch
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip setuptools wheel
+          pip install buildozer cython kivy kivymd pillow requests
+
+      - name: Generate app icons
+        working-directory: mobil
+        run: python create_icons.py
+
+      - name: Cache Buildozer
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            mobil/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('mobil/buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: Build APK
+        working-directory: mobil
+        run: |
+          yes | buildozer android debug 2>&1 | tee build.log
+          echo "Build completed"
+
+      - name: Find APK
+        id: find_apk
+        working-directory: mobil
+        run: |
+          APK_PATH=$(find bin -name "*.apk" | head -1)
+          echo "apk_path=mobil/$APK_PATH" >> $GITHUB_OUTPUT
+          echo "APK found: $APK_PATH"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iett-takip-apk
+          path: mobil/bin/*.apk
+          retention-days: 30
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: mobil/build.log
+          retention-days: 7
