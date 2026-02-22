@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Sesli Notlar</string>
+
+    <!-- Main Screen -->
+    <string name="no_notes">Henüz not yok\nSes kaydı başlatmak için mikrofon butonuna basın</string>
+    <string name="search_notes">Notlarda ara…</string>
+    <string name="delete_note">Notu Sil</string>
+    <string name="delete_confirm">Bu notu silmek istediğinizden emin misiniz?</string>
+    <string name="yes">Evet</string>
+    <string name="no">Hayır</string>
+    <string name="cancel">İptal</string>
+    <string name="ok">Tamam</string>
+    <string name="save">Kaydet</string>
+
+    <!-- Recording -->
+    <string name="start_recording">Kayıt Başlat</string>
+    <string name="stop_recording">Kaydı Durdur</string>
+    <string name="recording">Kayıt yapılıyor…</string>
+    <string name="recording_saved">Kayıt kaydedildi</string>
+    <string name="recording_cancelled">Kayıt iptal edildi</string>
+
+    <!-- Transcription -->
+    <string name="transcribing">Ses yazıya çevriliyor…</string>
+    <string name="transcription_complete">Yazıya çevirme tamamlandı</string>
+    <string name="transcription_failed">Yazıya çevirme başarısız</string>
+    <string name="retry_transcription">Tekrar Dene</string>
+
+    <!-- TTS -->
+    <string name="speak_text">Metni Seslendir</string>
+    <string name="stop_speaking">Seslendirmeyi Durdur</string>
+    <string name="speaking">Seslendiriliyor…</string>
+    <string name="tts_error">Seslendirme hatası</string>
+
+    <!-- Settings -->
+    <string name="settings">Ayarlar</string>
+    <string name="voice_selection">TTS Ses Seçimi</string>
+    <string name="language">Dil</string>
+    <string name="about">Hakkında</string>
+    <string name="version">Sürüm 1.0</string>
+    <string name="model_required">Lütfen önce Ayarlar\'dan Whisper modelini indirin</string>
+    <string name="model_downloaded">Model indirildi</string>
+    <string name="model_downloading">Model indiriliyor…</string>
+
+    <!-- Note Detail -->
+    <string name="note_title_hint">Not Başlığı</string>
+    <string name="note_content_hint">Not içeriği…</string>
+    <string name="play_audio">Sesi Oynat</string>
+    <string name="pause_audio">Sesi Duraklat</string>
+    <string name="note_saved">Not kaydedildi</string>
+    <string name="note_deleted">Not silindi</string>
+
+    <!-- Permissions -->
+    <string name="permission_required">İzin Gerekli</string>
+    <string name="microphone_permission_message">Ses kaydı için mikrofon izni gereklidir.</string>
+    <string name="grant_permission">İzin Ver</string>
+
+    <!-- Time formats -->
+    <string name="duration_format">%02d:%02d</string>
+    <string name="date_today">Bugün</string>
+    <string name="date_yesterday">Dün</string>
+</resources>
