@@ -66,6 +66,15 @@ class MainActivity : AppCompatActivity() {
         setupSearch()
         setupTTSCallbacks()
         observeNotes()
+        preloadModel()
+    }
+
+    private fun preloadModel() {
+        if (ModelManager.isModelDownloaded(this)) {
+            lifecycleScope.launch {
+                whisperService.loadModel()
+            }
+        }
     }
 
     private fun setupToolbar() {
@@ -215,10 +224,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startRecording() {
-        if (!whisperService.hasApiKey()) {
+        // Check if Whisper model is downloaded
+        if (!ModelManager.isModelDownloaded(this)) {
             AlertDialog.Builder(this)
-                .setTitle("API Anahtarı Gerekli")
-                .setMessage(getString(R.string.api_key_required))
+                .setTitle("Whisper Modeli Gerekli")
+                .setMessage("Ses tanıma için önce Whisper modelini indirmeniz gerekiyor. Ayarlar'a gitmek ister misiniz?")
                 .setPositiveButton("Ayarlar") { _, _ ->
                     startActivity(Intent(this, SettingsActivity::class.java))
                 }
@@ -245,13 +255,34 @@ class MainActivity : AppCompatActivity() {
         binding.transcribingOverlay.visibility = View.VISIBLE
 
         lifecycleScope.launch {
-            // Transcribe with Whisper
-            val transcription = whisperService.transcribe(result.filePath)
+            // Step 1: Convert M4A to WAV (16kHz, 16-bit, mono) for whisper.cpp
+            val wavPath = AudioConverter.convertToWav(this@MainActivity, result.filePath)
+
+            if (wavPath == null) {
+                binding.transcribingOverlay.visibility = View.GONE
+                // Save note without transcription
+                val note = Note(
+                    title = "Sesli Not",
+                    content = "",
+                    audioFilePath = result.filePath,
+                    duration = result.durationMs,
+                    isTranscribed = false
+                )
+                val noteId = noteDao.insertNote(note)
+                Toast.makeText(this@MainActivity, "Ses dosyası dönüştürülemedi", Toast.LENGTH_LONG).show()
+                openNoteDetail(noteId)
+                return@launch
+            }
+
+            // Step 2: Transcribe with local Whisper
+            val transcription = whisperService.transcribe(wavPath)
+
+            // Clean up temp WAV file
+            java.io.File(wavPath).delete()
 
             binding.transcribingOverlay.visibility = View.GONE
 
             if (transcription.success) {
-                // Create and save note
                 val note = Note(
                     title = generateTitle(transcription.text),
                     content = transcription.text,
@@ -267,12 +298,8 @@ class MainActivity : AppCompatActivity() {
                     Toast.LENGTH_SHORT
                 ).show()
 
-                // Open note detail
-                val intent = Intent(this@MainActivity, NoteDetailActivity::class.java)
-                intent.putExtra("note_id", noteId)
-                startActivity(intent)
+                openNoteDetail(noteId)
             } else {
-                // Save note without transcription
                 val note = Note(
                     title = "Sesli Not",
                     content = "",
@@ -286,14 +313,18 @@ class MainActivity : AppCompatActivity() {
                     .setTitle(getString(R.string.transcription_failed))
                     .setMessage(transcription.error ?: "Bilinmeyen hata")
                     .setPositiveButton("Notu Aç") { _, _ ->
-                        val intent = Intent(this@MainActivity, NoteDetailActivity::class.java)
-                        intent.putExtra("note_id", noteId)
-                        startActivity(intent)
+                        openNoteDetail(noteId)
                     }
                     .setNegativeButton(getString(R.string.ok), null)
                     .show()
             }
         }
+    }
+
+    private fun openNoteDetail(noteId: Long) {
+        val intent = Intent(this, NoteDetailActivity::class.java)
+        intent.putExtra("note_id", noteId)
+        startActivity(intent)
     }
 
     private fun generateTitle(text: String): String {
@@ -342,7 +373,6 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(getString(R.string.yes)) { _, _ ->
                 lifecycleScope.launch {
                     noteDao.deleteNote(note)
-                    // Delete audio file
                     note.audioFilePath?.let { path ->
                         java.io.File(path).delete()
                     }
@@ -355,11 +385,22 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Reload model if it was downloaded while in settings
+        if (ModelManager.isModelDownloaded(this) && !whisperService.isReady()) {
+            lifecycleScope.launch {
+                whisperService.loadModel()
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         audioRecorder.release()
         audioPlayerManager.release()
         edgeTTSService.release()
+        whisperService.release()
         stopRecordingTimer()
     }
 }

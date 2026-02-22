@@ -1,28 +1,32 @@
 package com.voicenotes.app
 
 import android.os.Bundle
+import android.view.View
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.voicenotes.app.databinding.ActivitySettingsBinding
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
-    private lateinit var whisperService: WhisperService
     private lateinit var edgeTTSService: EdgeTTSService
+    private var downloadJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        whisperService = WhisperService(this)
         edgeTTSService = EdgeTTSService(this)
 
         setupToolbar()
         loadSettings()
+        updateModelStatus()
         setupListeners()
     }
 
@@ -33,10 +37,12 @@ class SettingsActivity : AppCompatActivity() {
     private fun loadSettings() {
         val prefs = getSharedPreferences("voice_notes_prefs", MODE_PRIVATE)
 
-        // Load API key
-        val apiKey = prefs.getString("openai_api_key", "") ?: ""
-        if (apiKey.isNotBlank()) {
-            binding.editApiKey.setText(apiKey)
+        // Load model selection
+        val selectedModel = ModelManager.getSelectedModel(this)
+        when (selectedModel) {
+            ModelManager.WhisperModel.TINY -> binding.radioModelTiny.isChecked = true
+            ModelManager.WhisperModel.BASE -> binding.radioModelBase.isChecked = true
+            ModelManager.WhisperModel.SMALL -> binding.radioModelSmall.isChecked = true
         }
 
         // Load voice selection
@@ -52,12 +58,57 @@ class SettingsActivity : AppCompatActivity() {
         updateSpeechRateLabel(rate)
     }
 
+    private fun updateModelStatus() {
+        val selectedModel = getSelectedModelFromRadio()
+        val isDownloaded = ModelManager.isModelDownloaded(this, selectedModel)
+
+        if (isDownloaded) {
+            binding.modelStatusDot.setBackgroundColor(
+                ContextCompat.getColor(this, R.color.speaking_green)
+            )
+            binding.modelStatusText.text = "${selectedModel.displayName} - Hazır"
+            binding.modelStatusText.setTextColor(
+                ContextCompat.getColor(this, R.color.speaking_green)
+            )
+            binding.btnDownloadModel.text = "Yeniden İndir"
+            binding.btnDeleteModel.visibility = View.VISIBLE
+        } else {
+            binding.modelStatusDot.setBackgroundColor(
+                ContextCompat.getColor(this, R.color.recording_red)
+            )
+            binding.modelStatusText.text = "Model indirilmemiş"
+            binding.modelStatusText.setTextColor(
+                ContextCompat.getColor(this, R.color.recording_red)
+            )
+            binding.btnDownloadModel.text = "Modeli İndir"
+            binding.btnDeleteModel.visibility = View.GONE
+        }
+    }
+
     private fun setupListeners() {
-        // Save API Key
-        binding.btnSaveApiKey.setOnClickListener {
-            val apiKey = binding.editApiKey.text?.toString()?.trim() ?: ""
-            whisperService.setApiKey(apiKey)
-            Toast.makeText(this, getString(R.string.api_key_saved), Toast.LENGTH_SHORT).show()
+        // Model radio group change
+        binding.modelRadioGroup.setOnCheckedChangeListener { _, _ ->
+            updateModelStatus()
+        }
+
+        // Download model
+        binding.btnDownloadModel.setOnClickListener {
+            downloadModel()
+        }
+
+        // Delete model
+        binding.btnDeleteModel.setOnClickListener {
+            val model = getSelectedModelFromRadio()
+            AlertDialog.Builder(this)
+                .setTitle("Modeli Sil")
+                .setMessage("${model.displayName} modelini silmek istediğinizden emin misiniz?")
+                .setPositiveButton("Sil") { _, _ ->
+                    ModelManager.deleteModel(this, model)
+                    updateModelStatus()
+                    Toast.makeText(this, "Model silindi", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("İptal", null)
+                .show()
         }
 
         // Voice selection
@@ -123,6 +174,61 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun downloadModel() {
+        val model = getSelectedModelFromRadio()
+
+        binding.btnDownloadModel.isEnabled = false
+        binding.btnDownloadModel.text = "İndiriliyor..."
+        binding.downloadProgress.visibility = View.VISIBLE
+        binding.downloadProgress.isIndeterminate = false
+        binding.downloadProgress.progress = 0
+        binding.downloadProgressText.visibility = View.VISIBLE
+        binding.downloadProgressText.text = "Hazırlanıyor..."
+        binding.modelRadioGroup.isEnabled = false
+
+        downloadJob = lifecycleScope.launch {
+            val result = ModelManager.downloadModel(this@SettingsActivity, model) { downloaded, total ->
+                runOnUiThread {
+                    if (total > 0) {
+                        val percent = (downloaded * 100 / total).toInt()
+                        binding.downloadProgress.progress = percent
+                        val downloadedMB = downloaded / (1024 * 1024)
+                        val totalMB = total / (1024 * 1024)
+                        binding.downloadProgressText.text = "${downloadedMB} MB / ${totalMB} MB (%${percent})"
+                    } else {
+                        binding.downloadProgress.isIndeterminate = true
+                        val downloadedMB = downloaded / (1024 * 1024)
+                        binding.downloadProgressText.text = "${downloadedMB} MB indirildi"
+                    }
+                }
+            }
+
+            runOnUiThread {
+                binding.downloadProgress.visibility = View.GONE
+                binding.downloadProgressText.visibility = View.GONE
+                binding.btnDownloadModel.isEnabled = true
+                binding.modelRadioGroup.isEnabled = true
+
+                if (result.success) {
+                    Toast.makeText(this@SettingsActivity, "Model başarıyla indirildi!", Toast.LENGTH_LONG).show()
+                    updateModelStatus()
+                } else {
+                    binding.btnDownloadModel.text = "Modeli İndir"
+                    Toast.makeText(this@SettingsActivity, result.error ?: "İndirme başarısız", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun getSelectedModelFromRadio(): ModelManager.WhisperModel {
+        return when (binding.modelRadioGroup.checkedRadioButtonId) {
+            R.id.radioModelTiny -> ModelManager.WhisperModel.TINY
+            R.id.radioModelBase -> ModelManager.WhisperModel.BASE
+            R.id.radioModelSmall -> ModelManager.WhisperModel.SMALL
+            else -> ModelManager.WhisperModel.BASE
+        }
+    }
+
     private fun updateSpeechRateLabel(rate: Int) {
         binding.speechRateLabel.text = when {
             rate < -30 -> "Çok Yavaş"
@@ -135,6 +241,7 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        downloadJob?.cancel()
         edgeTTSService.release()
     }
 }

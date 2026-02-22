@@ -34,15 +34,13 @@
 
     <!-- Settings -->
     <string name="settings">Ayarlar</string>
-    <string name="api_key_title">OpenAI API Anahtarı</string>
-    <string name="api_key_hint">sk-xxxx…</string>
-    <string name="api_key_description">Whisper ile ses tanıma için OpenAI API anahtarınızı girin</string>
     <string name="voice_selection">TTS Ses Seçimi</string>
     <string name="language">Dil</string>
     <string name="about">Hakkında</string>
     <string name="version">Sürüm 1.0</string>
-    <string name="api_key_saved">API anahtarı kaydedildi</string>
-    <string name="api_key_required">Lütfen önce Ayarlar\'dan API anahtarınızı girin</string>
+    <string name="model_required">Lütfen önce Ayarlar\'dan Whisper modelini indirin</string>
+    <string name="model_downloaded">Model indirildi</string>
+    <string name="model_downloading">Model indiriliyor…</string>
 
     <!-- Note Detail -->
     <string name="note_title_hint">Not Başlığı</string>

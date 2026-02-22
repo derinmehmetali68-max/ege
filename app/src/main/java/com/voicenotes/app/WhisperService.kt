@@ -1,50 +1,75 @@
 package com.voicenotes.app
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.asRequestBody
-import org.json.JSONObject
-import java.io.File
-import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 /**
- * Whisper AI speech-to-text service.
- * Uses OpenAI Whisper API for transcription.
+ * Local Whisper speech-to-text service.
+ * Uses whisper.cpp via JNI for on-device transcription.
+ * No internet or API key required.
  */
 class WhisperService(private val context: Context) {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
+    private val whisperLib = WhisperLib()
+    private var contextPtr: Long = 0
+    private var isModelLoaded = false
 
     /**
-     * Transcribe an audio file using OpenAI Whisper API.
-     *
-     * @param audioFilePath Path to the audio file
-     * @param language Language code (default: "tr" for Turkish)
-     * @return Transcribed text
+     * Load the Whisper model from disk.
+     * Must be called before transcription.
      */
-    suspend fun transcribe(
-        audioFilePath: String,
-        language: String = "tr"
-    ): TranscriptionResult = withContext(Dispatchers.IO) {
-        val apiKey = getApiKey()
-        if (apiKey.isBlank()) {
-            return@withContext TranscriptionResult(
-                success = false,
-                text = "",
-                error = "API anahtarı ayarlanmamış. Ayarlar'dan OpenAI API anahtarınızı girin."
-            )
+    suspend fun loadModel(): Boolean = withContext(Dispatchers.IO) {
+        if (isModelLoaded && contextPtr != 0L) {
+            return@withContext true
         }
 
-        val audioFile = File(audioFilePath)
-        if (!audioFile.exists()) {
+        val modelPath = ModelManager.getModelPath(context)
+        if (modelPath == null || !java.io.File(modelPath).exists()) {
+            Log.e(TAG, "Model file not found")
+            return@withContext false
+        }
+
+        Log.i(TAG, "Loading model from: $modelPath")
+        contextPtr = whisperLib.initModel(modelPath)
+
+        if (contextPtr == 0L) {
+            Log.e(TAG, "Failed to load model")
+            isModelLoaded = false
+            return@withContext false
+        }
+
+        Log.i(TAG, "Model loaded successfully (ptr=$contextPtr)")
+        isModelLoaded = true
+        return@withContext true
+    }
+
+    /**
+     * Transcribe a WAV file (must be 16kHz, 16-bit, mono PCM).
+     * Use AudioConverter to convert M4A/other formats first.
+     *
+     * @param wavFilePath Path to WAV file
+     * @param language Language code (default: "tr" for Turkish)
+     * @return TranscriptionResult with success/failure and text
+     */
+    suspend fun transcribe(
+        wavFilePath: String,
+        language: String = "tr"
+    ): TranscriptionResult = withContext(Dispatchers.IO) {
+        if (!isModelLoaded || contextPtr == 0L) {
+            val loaded = loadModel()
+            if (!loaded) {
+                return@withContext TranscriptionResult(
+                    success = false,
+                    text = "",
+                    error = "Whisper modeli yüklenemedi. Lütfen Ayarlar'dan modeli indirin."
+                )
+            }
+        }
+
+        val file = java.io.File(wavFilePath)
+        if (!file.exists()) {
             return@withContext TranscriptionResult(
                 success = false,
                 text = "",
@@ -53,76 +78,92 @@ class WhisperService(private val context: Context) {
         }
 
         try {
-            val requestBody = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart(
-                    "file",
-                    audioFile.name,
-                    audioFile.asRequestBody("audio/m4a".toMediaType())
-                )
-                .addFormDataPart("model", "whisper-1")
-                .addFormDataPart("language", language)
-                .addFormDataPart("response_format", "json")
-                .build()
+            Log.i(TAG, "Starting transcription: $wavFilePath")
+            val numThreads = getOptimalThreadCount()
+            val result = whisperLib.transcribeFile(contextPtr, wavFilePath, language, numThreads)
 
-            val request = Request.Builder()
-                .url(WHISPER_API_URL)
-                .addHeader("Authorization", "Bearer $apiKey")
-                .post(requestBody)
-                .build()
-
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string() ?: ""
-
-            if (response.isSuccessful) {
-                val json = JSONObject(responseBody)
-                val text = json.optString("text", "")
-                TranscriptionResult(
-                    success = true,
-                    text = text,
-                    error = null
-                )
-            } else {
-                val errorJson = try {
-                    JSONObject(responseBody)
-                } catch (_: Exception) {
-                    null
-                }
-                val errorMessage = errorJson?.optJSONObject("error")?.optString("message")
-                    ?: "Sunucu hatası: ${response.code}"
+            if (result.startsWith("[HATA:")) {
+                Log.e(TAG, "Transcription error: $result")
                 TranscriptionResult(
                     success = false,
                     text = "",
-                    error = errorMessage
+                    error = result.removePrefix("[HATA: ").removeSuffix("]")
+                )
+            } else {
+                val cleanedText = result.trim()
+                Log.i(TAG, "Transcription success: ${cleanedText.take(100)}")
+                TranscriptionResult(
+                    success = true,
+                    text = cleanedText,
+                    error = null
                 )
             }
-        } catch (e: IOException) {
-            TranscriptionResult(
-                success = false,
-                text = "",
-                error = "Ağ hatası: ${e.localizedMessage}"
-            )
         } catch (e: Exception) {
+            Log.e(TAG, "Transcription exception", e)
             TranscriptionResult(
                 success = false,
                 text = "",
-                error = "Beklenmeyen hata: ${e.localizedMessage}"
+                error = "Çeviri hatası: ${e.localizedMessage}"
             )
         }
     }
 
-    private fun getApiKey(): String {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_OPENAI_API_KEY, "") ?: ""
+    /**
+     * Transcribe from raw float PCM data.
+     * @param pcmData Float array at 16kHz mono
+     * @param language Language code
+     */
+    suspend fun transcribeBuffer(
+        pcmData: FloatArray,
+        language: String = "tr"
+    ): TranscriptionResult = withContext(Dispatchers.IO) {
+        if (!isModelLoaded || contextPtr == 0L) {
+            val loaded = loadModel()
+            if (!loaded) {
+                return@withContext TranscriptionResult(
+                    success = false,
+                    text = "",
+                    error = "Model yüklenemedi."
+                )
+            }
+        }
+
+        try {
+            val numThreads = getOptimalThreadCount()
+            val result = whisperLib.transcribeBuffer(contextPtr, pcmData, language, numThreads)
+
+            if (result.startsWith("[HATA:")) {
+                TranscriptionResult(false, "", result)
+            } else {
+                TranscriptionResult(true, result.trim(), null)
+            }
+        } catch (e: Exception) {
+            TranscriptionResult(false, "", "Çeviri hatası: ${e.localizedMessage}")
+        }
     }
 
-    fun setApiKey(apiKey: String) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_OPENAI_API_KEY, apiKey).apply()
+    fun isReady(): Boolean = isModelLoaded && contextPtr != 0L
+
+    fun getSystemInfo(): String {
+        return try {
+            whisperLib.getSystemInfo()
+        } catch (e: Exception) {
+            "N/A"
+        }
     }
 
-    fun hasApiKey(): Boolean {
-        return getApiKey().isNotBlank()
+    fun release() {
+        if (contextPtr != 0L) {
+            whisperLib.freeModel(contextPtr)
+            contextPtr = 0
+            isModelLoaded = false
+            Log.i(TAG, "Model released")
+        }
+    }
+
+    private fun getOptimalThreadCount(): Int {
+        val cores = Runtime.getRuntime().availableProcessors()
+        return cores.coerceIn(2, 8)
     }
 
     data class TranscriptionResult(
@@ -132,8 +173,6 @@ class WhisperService(private val context: Context) {
     )
 
     companion object {
-        private const val WHISPER_API_URL = "https://api.openai.com/v1/audio/transcriptions"
-        private const val PREFS_NAME = "voice_notes_prefs"
-        private const val KEY_OPENAI_API_KEY = "openai_api_key"
+        private const val TAG = "WhisperService"
     }
 }

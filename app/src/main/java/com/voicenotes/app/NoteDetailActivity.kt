@@ -220,15 +220,33 @@ class NoteDetailActivity : AppCompatActivity() {
 
         AlertDialog.Builder(this)
             .setTitle("Yeniden Yazıya Çevir")
-            .setMessage("Ses dosyası Whisper AI ile yeniden yazıya çevrilecek. Mevcut metin değiştirilecek.")
+            .setMessage("Ses dosyası yerel Whisper AI ile yeniden yazıya çevrilecek. Mevcut metin değiştirilecek.")
             .setPositiveButton(getString(R.string.ok)) { _, _ ->
                 lifecycleScope.launch {
                     runOnUiThread {
                         binding.btnRetranscribe.isEnabled = false
-                        binding.btnRetranscribe.text = "İşleniyor..."
+                        binding.btnRetranscribe.text = "Dönüştürülüyor..."
                     }
 
-                    val result = whisperService.transcribe(audioPath)
+                    // Convert M4A to WAV first
+                    val wavPath = AudioConverter.convertToWav(this@NoteDetailActivity, audioPath)
+                    if (wavPath == null) {
+                        runOnUiThread {
+                            binding.btnRetranscribe.isEnabled = true
+                            binding.btnRetranscribe.text = "Yeniden Çevir"
+                            Toast.makeText(this@NoteDetailActivity, "Ses dosyası dönüştürülemedi", Toast.LENGTH_LONG).show()
+                        }
+                        return@launch
+                    }
+
+                    runOnUiThread {
+                        binding.btnRetranscribe.text = "Çevriliyor..."
+                    }
+
+                    val result = whisperService.transcribe(wavPath)
+
+                    // Clean up temp WAV
+                    java.io.File(wavPath).delete()
 
                     runOnUiThread {
                         binding.btnRetranscribe.isEnabled = true
@@ -306,6 +324,7 @@ class NoteDetailActivity : AppCompatActivity() {
         super.onDestroy()
         audioPlayerManager.release()
         edgeTTSService.release()
+        whisperService.release()
         seekBarHandler.removeCallbacksAndMessages(null)
     }
 }
