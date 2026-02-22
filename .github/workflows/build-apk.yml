@@ -78,7 +78,20 @@ jobs:
           exit 1
 
       - name: Assemble Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        id: assemble_build
+        continue-on-error: true
+        run: ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee assemble-build.log
+
+      - name: Report Assemble errors
+        if: steps.assemble_build.outcome == 'failure'
+        run: |
+          echo "## Assemble Debug APK Failed" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -300 assemble-build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "=== LAST 300 LINES ==="
+          tail -300 assemble-build.log
+          exit 1
 
       - name: Build Release APK (unsigned)
         run: ./gradlew assembleRelease --no-daemon --stacktrace
@@ -108,4 +121,5 @@ jobs:
           path: |
             kotlin-build.log
             native-build.log
+            assemble-build.log
           retention-days: 7
