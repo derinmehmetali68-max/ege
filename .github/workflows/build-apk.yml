@@ -38,44 +38,47 @@ jobs:
           WHISPER_DIR="app/src/main/cpp/whisper.cpp"
           git clone --depth 1 --branch v1.7.3 https://github.com/ggerganov/whisper.cpp.git "$WHISPER_DIR"
           rm -rf "$WHISPER_DIR/.git"
-          echo "=== Verify source files exist ==="
-          for f in ggml/src/ggml.c ggml/src/ggml-backend.cpp ggml/src/ggml-cpu/ggml-cpu.c ggml/src/ggml-cpu/llamafile/sgemm.cpp include/whisper.h src/whisper.cpp; do
-            if [ -f "$WHISPER_DIR/$f" ]; then
-              echo "OK: $f"
-            else
-              echo "MISSING: $f"
-            fi
-          done
 
       - name: Configure Android SDK for Gradle
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "ANDROID_HOME=$ANDROID_HOME"
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        shell: bash
-        run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
-          BUILD_EXIT=${PIPESTATUS[0]}
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo ""
-            echo "============================================"
-            echo "BUILD FAILED - Last 300 lines of build log:"
-            echo "============================================"
-            tail -300 build.log
-            exit $BUILD_EXIT
-          fi
+      - name: Compile Kotlin
+        id: kotlin_build
+        continue-on-error: true
+        run: ./gradlew compileDebugKotlin --no-daemon --stacktrace 2>&1 | tee kotlin-build.log
 
-      - name: Upload build log on failure
-        uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: build-log
-          path: build.log
-          retention-days: 7
+      - name: Report Kotlin errors
+        if: steps.kotlin_build.outcome == 'failure'
+        run: |
+          echo "## Kotlin Compilation Failed" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -200 kotlin-build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "=== LAST 200 LINES ==="
+          tail -200 kotlin-build.log
+          exit 1
+
+      - name: Build Native Code
+        id: native_build
+        continue-on-error: true
+        run: ./gradlew externalNativeBuildDebug --no-daemon --stacktrace 2>&1 | tee native-build.log
+
+      - name: Report Native errors
+        if: steps.native_build.outcome == 'failure'
+        run: |
+          echo "## Native Build Failed" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -200 native-build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "=== LAST 200 LINES ==="
+          tail -200 native-build.log
+          exit 1
+
+      - name: Assemble Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Build Release APK (unsigned)
         run: ./gradlew assembleRelease --no-daemon --stacktrace
@@ -96,3 +99,13 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           retention-days: 30
           if-no-files-found: ignore
+
+      - name: Upload build logs on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-logs
+          path: |
+            kotlin-build.log
+            native-build.log
+          retention-days: 7
