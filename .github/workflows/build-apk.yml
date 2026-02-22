@@ -46,72 +46,41 @@ jobs:
         run: chmod +x gradlew
 
       - name: Compile Kotlin
-        id: kotlin_build
-        continue-on-error: true
-        run: ./gradlew compileDebugKotlin --no-daemon --stacktrace 2>&1 | tee kotlin-build.log
-
-      - name: Report Kotlin errors
-        if: steps.kotlin_build.outcome == 'failure'
-        run: |
-          echo "## Kotlin Compilation Failed" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -200 kotlin-build.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "=== LAST 200 LINES ==="
-          tail -200 kotlin-build.log
-          exit 1
+        run: ./gradlew compileDebugKotlin --no-daemon --stacktrace
 
       - name: Build Native Code
-        id: native_build
-        continue-on-error: true
-        run: ./gradlew externalNativeBuildDebug --no-daemon --stacktrace 2>&1 | tee native-build.log
-
-      - name: Report Native errors
-        if: steps.native_build.outcome == 'failure'
-        run: |
-          echo "## Native Build Failed" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -200 native-build.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "=== LAST 200 LINES ==="
-          tail -200 native-build.log
-          exit 1
+        run: ./gradlew externalNativeBuildDebug --no-daemon --stacktrace
 
       - name: Assemble Debug APK
-        id: assemble_build
-        continue-on-error: true
         run: ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee assemble-build.log
-
-      - name: Report Assemble errors
-        if: steps.assemble_build.outcome == 'failure'
-        run: |
-          echo "## Assemble Debug APK Failed" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -300 assemble-build.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "=== LAST 300 LINES ==="
-          tail -300 assemble-build.log
-          exit 1
 
       - name: Build Release APK (unsigned)
         run: ./gradlew assembleRelease --no-daemon --stacktrace
         continue-on-error: true
 
+      - name: List APK outputs
+        run: |
+          echo "=== Debug APKs ==="
+          find app/build/outputs/apk/debug/ -name "*.apk" -ls 2>/dev/null || echo "No debug APKs found"
+          echo "=== Release APKs ==="
+          find app/build/outputs/apk/release/ -name "*.apk" -ls 2>/dev/null || echo "No release APKs found"
+
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: VoiceNotes-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
-        if: success()
+        continue-on-error: true
         with:
           name: VoiceNotes-release-apk
-          path: app/build/outputs/apk/release/*.apk
-          retention-days: 30
+          path: app/build/outputs/apk/release/
           if-no-files-found: ignore
+          retention-days: 30
 
       - name: Upload build logs on failure
         uses: actions/upload-artifact@v4
