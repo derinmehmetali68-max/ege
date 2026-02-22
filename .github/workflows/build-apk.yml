@@ -45,50 +45,47 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Compile Kotlin
-        run: ./gradlew compileDebugKotlin --no-daemon --stacktrace
-
-      - name: Build Native Code
-        run: ./gradlew externalNativeBuildDebug --no-daemon --stacktrace
-
-      - name: Assemble Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee assemble-build.log
+      - name: Build Debug APK
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build-debug.log
 
       - name: Build Release APK (unsigned)
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+        run: ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build-release.log
         continue-on-error: true
 
       - name: List APK outputs
+        if: always()
         run: |
           echo "=== Debug APKs ==="
-          find app/build/outputs/apk/debug/ -name "*.apk" -ls 2>/dev/null || echo "No debug APKs found"
-          echo "=== Release APKs ==="
-          find app/build/outputs/apk/release/ -name "*.apk" -ls 2>/dev/null || echo "No release APKs found"
+          find app/build/outputs/ -name "*.apk" -ls 2>/dev/null || echo "No APKs found"
 
       - name: Upload Debug APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: VoiceNotes-debug-apk
-          path: app/build/outputs/apk/debug/
+          path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Upload Release APK
+        if: success()
         uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: VoiceNotes-release-apk
-          path: app/build/outputs/apk/release/
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: Upload build logs on failure
+      - name: Upload build logs
+        if: always()
         uses: actions/upload-artifact@v4
-        if: failure()
         with:
           name: build-logs
           path: |
-            kotlin-build.log
-            native-build.log
-            assemble-build.log
+            build-debug.log
+            build-release.log
+          if-no-files-found: ignore
           retention-days: 7
