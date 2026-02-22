@@ -58,13 +58,7 @@ static bool read_wav_file(const std::string &fname, std::vector<float> &pcmf32) 
         if (id == "fmt ") {
             file.read(reinterpret_cast<char*>(&audio_format), 2);
             file.read(reinterpret_cast<char*>(&num_channels), 2);
-            file.read(reinterpret_cast<char*>(&sample_rate), 2);
-            // skip byte_rate (4) + block_align (2)
-            // Actually sample_rate is 4 bytes
-            uint16_t sr_high;
-            file.read(reinterpret_cast<char*>(&sr_high), 2);
-            sample_rate |= (static_cast<uint32_t>(sr_high) << 16);
-
+            file.read(reinterpret_cast<char*>(&sample_rate), 4);
             uint32_t byte_rate;
             file.read(reinterpret_cast<char*>(&byte_rate), 4);
             uint16_t block_align;

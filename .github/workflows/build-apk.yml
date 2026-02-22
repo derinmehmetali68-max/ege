@@ -10,7 +10,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout code
@@ -27,6 +27,7 @@ jobs:
 
       - name: Install SDK components
         run: |
+          yes | sdkmanager --licenses || true
           sdkmanager --install "platforms;android-34"
           sdkmanager --install "build-tools;34.0.0"
           sdkmanager --install "ndk;26.1.10909125"
@@ -36,8 +37,7 @@ jobs:
         run: |
           WHISPER_DIR="app/src/main/cpp/whisper.cpp"
           git clone --depth 1 --branch v1.7.3 https://github.com/ggerganov/whisper.cpp.git "$WHISPER_DIR"
-          cd "$WHISPER_DIR"
-          rm -rf .git bindings examples models samples tests scripts .github
+          rm -rf "$WHISPER_DIR/.git"
 
       - name: Grant execute permission for gradlew
         run: |
