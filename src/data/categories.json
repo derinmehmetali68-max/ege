@@ -1,0 +1,65 @@
+{
+  "categories": [
+    {
+      "id": "matematik",
+      "name": "Matematik",
+      "icon": "calculator",
+      "color": "blue",
+      "subcategories": [
+        { "id": "temel", "name": "Temel Matematik", "categoryId": "matematik" },
+        { "id": "turev", "name": "Türev", "categoryId": "matematik" },
+        { "id": "integral", "name": "İntegral", "categoryId": "matematik" },
+        { "id": "limit", "name": "Limit", "categoryId": "matematik" },
+        { "id": "logaritma", "name": "Logaritma", "categoryId": "matematik" }
+      ]
+    },
+    {
+      "id": "fizik",
+      "name": "Fizik",
+      "icon": "atom",
+      "color": "purple",
+      "subcategories": [
+        { "id": "mekanik", "name": "Mekanik", "categoryId": "fizik" },
+        { "id": "elektrik", "name": "Elektrik", "categoryId": "fizik" },
+        { "id": "optik", "name": "Optik", "categoryId": "fizik" },
+        { "id": "dalgalar", "name": "Dalgalar", "categoryId": "fizik" }
+      ]
+    },
+    {
+      "id": "kimya",
+      "name": "Kimya",
+      "icon": "flask-conical",
+      "color": "green",
+      "subcategories": [
+        { "id": "atomyapisi", "name": "Atom Yapısı", "categoryId": "kimya" },
+        { "id": "periyodiktablo", "name": "Periyodik Tablo", "categoryId": "kimya" },
+        { "id": "kimyasalreaksiyonlar", "name": "Kimyasal Reaksiyonlar", "categoryId": "kimya" },
+        { "id": "organik", "name": "Organik Kimya", "categoryId": "kimya" }
+      ]
+    },
+    {
+      "id": "biyoloji",
+      "name": "Biyoloji",
+      "icon": "leaf",
+      "color": "emerald",
+      "subcategories": [
+        { "id": "hucre", "name": "Hücre", "categoryId": "biyoloji" },
+        { "id": "genetik", "name": "Genetik", "categoryId": "biyoloji" },
+        { "id": "ekoloji", "name": "Ekoloji", "categoryId": "biyoloji" },
+        { "id": "sindirim", "name": "Sindirim Sistemi", "categoryId": "biyoloji" }
+      ]
+    },
+    {
+      "id": "turkce",
+      "name": "Türkçe",
+      "icon": "book-open",
+      "color": "orange",
+      "subcategories": [
+        { "id": "dilbilgisi", "name": "Dil Bilgisi", "categoryId": "turkce" },
+        { "id": "paragraf", "name": "Paragraf", "categoryId": "turkce" },
+        { "id": "anlambilgisi", "name": "Anlam Bilgisi", "categoryId": "turkce" },
+        { "id": "yazimkurallari", "name": "Yazım Kuralları", "categoryId": "turkce" }
+      ]
+    }
+  ]
+}
